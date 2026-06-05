@@ -23,7 +23,9 @@ async function request(path, options = {}) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`[RestApiAdapter] ${options.method ?? "GET"} ${path} → ${res.status} ${body}`);
+    throw new Error(
+      `[RestApiAdapter] ${options.method ?? "GET"} ${path} → ${res.status} ${body}`,
+    );
   }
   // 204 No Content
   if (res.status === 204) return null;
