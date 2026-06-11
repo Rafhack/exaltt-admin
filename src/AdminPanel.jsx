@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { repository, buildDefaultConfig } from "./data/index.js";
+import { AuthProvider, useAuth } from "./AuthContext.jsx";
+import LoginScreen from "./LoginScreen.jsx";
+import UsersSection from "./UsersSection.jsx";
+
+// ─── STORAGE: see src/data/index.js ──────────────────────────────────────────
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────────
 // Base palette for known ISO keys; extras cycle through extended colors
@@ -1246,10 +1251,12 @@ const NAV_ITEMS = [
   { id: "depths", icon: "📏", label: "Profundidades" },
   { id: "machines", icon: "🏭", label: "Máquinas" },
   { id: "export", icon: "💾", label: "Export/Import" },
+  { id: "users", icon: "👥", label: "Usuários" },
 ];
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function AdminPanel() {
+function AdminPanelInner() {
+  const { currentUser, role, signOut } = useAuth();
   const [config, setConfig] = useState(null); // null = loading
 
   // Bootstrap: load config from active adapter on mount
@@ -1415,6 +1422,22 @@ export default function AdminPanel() {
                 </span>
               </div>
             ))}
+            <div className="hidden sm:flex flex-col items-end gap-1">
+              <span className="text-[10px] text-slate-400 truncate max-w-[140px]">
+                {currentUser?.email}
+              </span>
+              <span
+                className={`text-[9px] font-black tracking-wider uppercase ${role === "super_admin" ? "text-amber-400" : "text-blue-400"}`}
+              >
+                {role === "super_admin" ? "Super Admin" : "Admin"}
+              </span>
+            </div>
+            <button
+              onClick={signOut}
+              className="rounded-xl border border-slate-700/60 bg-slate-800/60 px-3 py-1.5 text-[11px] font-black text-slate-300 hover:bg-slate-700 hover:text-white transition"
+            >
+              Sair
+            </button>
           </div>
         </div>
       </header>
@@ -1526,6 +1549,7 @@ export default function AdminPanel() {
                 onReset={handleReset}
               />
             )}
+            {activeTab === "users" && <UsersSection />}
           </div>
         </main>
       </div>
@@ -1539,4 +1563,32 @@ export default function AdminPanel() {
       )}
     </div>
   );
+}
+
+export default function AdminPanel() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  );
+}
+
+function AuthGate() {
+  const { currentUser, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#040810]">
+        <div className="text-center space-y-3">
+          <div className="mx-auto h-8 w-8 rounded-full border-2 border-cyan-500/30 border-t-cyan-500 animate-spin" />
+          <p className="text-xs font-black tracking-widest text-slate-500 uppercase">
+            Verificando sessão...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) return <LoginScreen />;
+  return <AdminPanelInner />;
 }
