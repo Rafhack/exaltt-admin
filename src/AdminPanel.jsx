@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { repository, buildDefaultConfig } from "./data/index.js";
 import { AuthProvider, useAuth } from "./AuthContext.jsx";
+import { storage } from "./firebase.js";
+import {
+  ref,
+  uploadBytesResumable,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
 import LoginScreen from "./LoginScreen.jsx";
 import UsersSection from "./UsersSection.jsx";
 
@@ -116,10 +123,80 @@ const inputCls =
 
 // ─── SECTIONS ─────────────────────────────────────────────────────────────────
 
-function BrandSection({ brand, onChange, onSave }) {
+function BrandSection({ brand, onChange }) {
   const [local, setLocal] = useState({ ...brand });
   useEffect(() => setLocal({ ...brand }), [brand]);
   const set = (k, v) => setLocal((p) => ({ ...p, [k]: v }));
+
+  // ── Logo upload state ──────────────────────────────────────────────────────
+  const [uploadProgress, setUploadProgress] = useState(null); // 0-100 or null
+  const [uploadError, setUploadError] = useState("");
+  const [removing, setRemoving] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleLogoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowed = ["image/png", "image/jpeg", "image/svg+xml", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      setUploadError("Formato não suportado. Use PNG, JPG, SVG ou WebP.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setUploadError("Arquivo muito grande. Máximo 2 MB.");
+      return;
+    }
+
+    setUploadError("");
+    setUploadProgress(0);
+
+    const storageRef = ref(storage, `brand/logo_${Date.now()}_${file.name}`);
+    const task = uploadBytesResumable(storageRef, file);
+
+    task.on(
+      "state_changed",
+      (snap) =>
+        setUploadProgress(
+          Math.round((snap.bytesTransferred / snap.totalBytes) * 100),
+        ),
+      (err) => {
+        setUploadError(err.message);
+        setUploadProgress(null);
+      },
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref);
+        // Delete old logo from storage if it was also uploaded by us
+        if (local.logoUrl && local.logoStoragePath) {
+          try {
+            await deleteObject(ref(storage, local.logoStoragePath));
+          } catch {}
+        }
+        const updated = {
+          ...local,
+          logoUrl: url,
+          logoStoragePath: task.snapshot.ref.fullPath,
+        };
+        setLocal(updated);
+        onChange(updated);
+        setUploadProgress(null);
+      },
+    );
+  };
+
+  const handleRemoveLogo = async () => {
+    setRemoving(true);
+    if (local.logoStoragePath) {
+      try {
+        await deleteObject(ref(storage, local.logoStoragePath));
+      } catch {}
+    }
+    const updated = { ...local, logoUrl: "", logoStoragePath: "" };
+    setLocal(updated);
+    onChange(updated);
+    setRemoving(false);
+  };
+
   const handleSave = () => onChange(local);
 
   return (
@@ -129,6 +206,74 @@ function BrandSection({ brand, onChange, onSave }) {
         title="Identidade da Marca"
         subtitle="Nome, linha, produto e configurações de endpoint"
       />
+
+      {/* Logo */}
+      <div className="rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
+        <p className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
+          Logotipo
+        </p>
+        <div className="flex items-center gap-4">
+          {local.logoUrl ? (
+            <div className="relative flex-shrink-0">
+              <img
+                src={local.logoUrl}
+                alt="Logo"
+                className="h-16 max-w-[160px] rounded-xl border border-slate-700/60 bg-white object-contain p-2"
+              />
+            </div>
+          ) : (
+            <div className="flex h-16 w-32 flex-shrink-0 items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/40 text-xs text-slate-600">
+              Sem logo
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/svg+xml,image/webp"
+              className="hidden"
+              onChange={handleLogoChange}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadProgress !== null}
+              className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-black text-cyan-400 hover:bg-cyan-500/20 transition disabled:opacity-50"
+            >
+              {uploadProgress !== null
+                ? `Enviando… ${uploadProgress}%`
+                : local.logoUrl
+                  ? "Trocar logo"
+                  : "Enviar logo"}
+            </button>
+            {local.logoUrl && (
+              <button
+                onClick={handleRemoveLogo}
+                disabled={removing}
+                className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
+              >
+                {removing ? "Removendo…" : "Remover logo"}
+              </button>
+            )}
+          </div>
+          <div className="flex-1 text-xs text-slate-600 leading-relaxed">
+            PNG, JPG, SVG ou WebP
+            <br />
+            Máximo 2 MB
+            <br />
+            Recomendado: fundo transparente
+          </div>
+        </div>
+        {uploadProgress !== null && (
+          <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-cyan-500 transition-all"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        )}
+        {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
+      </div>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <FormField label="Empresa">
           <input
@@ -491,17 +636,17 @@ function IsoClassesSection({ isoClasses, onChange }) {
         </p>
         <div className="flex gap-2">
           <input
-            className={inputCls + " flex-1 text-center font-black uppercase"}
-            placeholder="Ex: Q"
-            maxLength={4}
-            value={newKey}
-            onChange={(e) => setNewKey(e.target.value.toUpperCase())}
-          />
-          <input
             className={inputCls + " flex-1"}
             placeholder="Descrição da classe..."
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
+          />
+          <input
+            className={inputCls + " w-20 text-center font-black uppercase"}
+            placeholder="Ex: Q"
+            maxLength={4}
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value.toUpperCase())}
           />
           <button
             onClick={addEntry}
@@ -1422,6 +1567,7 @@ function AdminPanelInner() {
                 </span>
               </div>
             ))}
+            <div className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black text-emerald-400 tracking-wider"></div>
             <div className="hidden sm:flex flex-col items-end gap-1">
               <span className="text-[10px] text-slate-400 truncate max-w-[140px]">
                 {currentUser?.email}
