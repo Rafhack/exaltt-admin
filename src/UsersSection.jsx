@@ -241,11 +241,18 @@ export default function UsersSection() {
                       ? new Date(u.createdAt).toLocaleDateString("pt-BR")
                       : "—"}
                   </td>
-                  <td className="px-3 py-3 text-xs text-slate-400 font-mono">
+                  <td
+                    className="px-3 py-3 text-xs text-slate-400 font-mono"
+                    title={u.createdBy}
+                  >
                     {u.createdBy === "bootstrap" ? (
                       <span className="text-slate-600">bootstrap</span>
                     ) : u.createdBy ? (
-                      u.createdBy.slice(0, 8) + "…"
+                      u.createdBy.length > 8 ? (
+                        u.createdBy.slice(0, 8) + "…"
+                      ) : (
+                        u.createdBy
+                      )
                     ) : (
                       "—"
                     )}
