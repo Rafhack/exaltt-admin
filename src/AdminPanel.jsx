@@ -636,17 +636,17 @@ function IsoClassesSection({ isoClasses, onChange }) {
         </p>
         <div className="flex gap-2">
           <input
-            className={inputCls + " flex-1"}
-            placeholder="Descrição da classe..."
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-          />
-          <input
-            className={inputCls + " w-20 text-center font-black uppercase"}
+            className={inputCls + "flex-1 text-center font-black uppercase"}
             placeholder="Ex: Q"
             maxLength={4}
             value={newKey}
             onChange={(e) => setNewKey(e.target.value.toUpperCase())}
+          />
+          <input
+            className={inputCls}
+            placeholder="Descrição da classe..."
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
           />
           <button
             onClick={addEntry}

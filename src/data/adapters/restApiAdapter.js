@@ -1,33 +1,24 @@
 import { BaseRepository } from "../repository.js";
 import { buildDefaultConfig } from "../defaults.js";
-
-/**
- * REST API adapter
- *
- * Expects a backend with these endpoints:
- *   GET    /api/config              → { ...config }
- *   PUT    /api/config              → full config replace
- *   PATCH  /api/config/:section     → partial section update
- *   DELETE /api/config              → reset to defaults
- *
- * Set VITE_API_BASE_URL in your .env file:
- *   VITE_API_BASE_URL=https://your-api.com
- */
+import { getToken } from "../../auth.js";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function request(path, options = {}) {
+  const token = await getToken();
+  const { headers: extraHeaders, ...rest } = options;
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
+    ...rest,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...extraHeaders,
+    },
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `[RestApiAdapter] ${options.method ?? "GET"} ${path} → ${res.status} ${body}`,
-    );
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
   }
-  // 204 No Content
   if (res.status === 204) return null;
   return res.json();
 }
@@ -35,9 +26,14 @@ async function request(path, options = {}) {
 export class RestApiAdapter extends BaseRepository {
   async getConfig() {
     try {
-      return await request("/api/config");
+      const res = await fetch(`${BASE_URL}/api/config`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
     } catch (e) {
-      console.error(e);
+      console.error(
+        "[RestApiAdapter] getConfig failed, using fallback:",
+        e.message,
+      );
       return buildDefaultConfig();
     }
   }
