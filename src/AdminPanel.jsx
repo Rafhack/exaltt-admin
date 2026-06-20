@@ -355,9 +355,9 @@ function BrandSection({ brand, onChange }) {
 function FnTableEditor({ fn, onChange, materials, currentMaterialName }) {
   const normalized = normalizeFn(fn);
 
-  const otherMaterials = Object.keys(materials).filter(
-    (n) => n !== currentMaterialName,
-  );
+  const otherMaterials = Object.keys(materials)
+    .filter((n) => n !== currentMaterialName)
+    .sort();
 
   const setMode = (mode) => {
     if (mode === "table") {
@@ -387,7 +387,7 @@ function FnTableEditor({ fn, onChange, materials, currentMaterialName }) {
   // Live preview of resolved values when in proportion mode
   const previewTable =
     normalized.mode === "proportion"
-      ? resolveFnTable(currentMaterialName || "__preview__", {
+      ? resolveFnTable("__preview__", {
           ...materials,
           __preview__: { fn: normalized },
         })
@@ -639,7 +639,10 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                 <td className="px-3 py-2.5 text-cyan-300 font-mono">
                   {previewFn(m)}
                   {normalizeFn(m.fn).mode === "proportion" && (
-                    <span className="ml-1.5 text-[9px] font-black text-amber-400 align-middle">
+                    <span
+                      className="ml-1.5 text-[9px] font-black text-amber-400 align-middle"
+                      title={`Proporçaão de ${Number(m.fn.proportionPct).toFixed(3)}% de ${m.fn.proportionOf}`}
+                    >
                       %
                     </span>
                   )}
