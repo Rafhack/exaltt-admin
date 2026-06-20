@@ -510,13 +510,25 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
   const [origName, setOrigName] = useState(null);
   const [isNew, setIsNew] = useState(false);
 
-  const filtered = Object.entries(materials).filter(([name, m]) => {
-    const matchSearch =
-      name.toLowerCase().includes(search.toLowerCase()) ||
-      m.materialClass.toLowerCase().includes(search.toLowerCase());
-    const matchIso = filterIso === "ALL" || m.iso === filterIso;
-    return matchSearch && matchIso;
-  });
+  const filtered = Object.entries(materials)
+    .filter(([name, m]) => {
+      const matchSearch =
+        name.toLowerCase().includes(search.toLowerCase()) ||
+        m.materialClass.toLowerCase().includes(search.toLowerCase());
+      const matchIso = filterIso === "ALL" || m.iso === filterIso;
+      return matchSearch && matchIso;
+    })
+    .sort((a, b) => {
+      const aName = a[1].iso + a[1].materialClass;
+      const bName = b[1].iso + b[1].materialClass;
+      if (aName < bName) {
+        return -1;
+      }
+      if (aName > bName) {
+        return 1;
+      }
+      return 0;
+    });
 
   const openNew = () => {
     setEditing({
@@ -635,7 +647,10 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                 <td className="px-3 py-2.5 text-slate-300 font-mono">
                   {m.life}
                 </td>
-                <td className="px-3 py-2.5 text-slate-400 text-xs max-w-[200px] truncate">
+                <td
+                  className="px-3 py-2.5 text-slate-400 text-xs max-w-[200px] truncate"
+                  title={m.materialClass}
+                >
                   {m.materialClass}
                 </td>
                 <td className="px-3 py-2.5">

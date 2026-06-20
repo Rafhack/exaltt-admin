@@ -15,7 +15,7 @@ export const STANDARD_DIAMETERS = [2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 20];
 
 /** Builds an empty table with all standard diameters set to null. */
 export function emptyFnTable() {
-  return Object.fromEntries(STANDARD_DIAMETERS.map(d => [String(d), null]));
+  return Object.fromEntries(STANDARD_DIAMETERS.map((d) => [String(d), null]));
 }
 
 /** Type guard / normalizer — accepts legacy flat-number fn for backward compatibility. */
@@ -23,10 +23,17 @@ export function normalizeFn(fn) {
   if (fn == null) return { mode: "table", table: emptyFnTable() };
   if (typeof fn === "number") {
     // Legacy material: flat fn applied to every diameter
-    return { mode: "table", table: Object.fromEntries(STANDARD_DIAMETERS.map(d => [String(d), fn])) };
+    return {
+      mode: "table",
+      table: Object.fromEntries(STANDARD_DIAMETERS.map((d) => [String(d), fn])),
+    };
   }
   if (fn.mode === "proportion") {
-    return { mode: "proportion", proportionOf: fn.proportionOf ?? "", proportionPct: fn.proportionPct ?? 100 };
+    return {
+      mode: "proportion",
+      proportionOf: fn.proportionOf ?? "",
+      proportionPct: fn.proportionPct ?? 100,
+    };
   }
   return { mode: "table", table: { ...emptyFnTable(), ...(fn.table ?? {}) } };
 }
@@ -52,7 +59,7 @@ export function resolveFnTable(materialName, materials, _seen = new Set()) {
   const scaled = {};
   for (const d of STANDARD_DIAMETERS) {
     const v = refTable[String(d)];
-    scaled[String(d)] = v == null ? null : Number((v * (pct / 100)).toFixed(4));
+    scaled[String(d)] = v == null ? null : Number((v * (pct / 100)).toFixed(3));
   }
   return scaled;
 }
@@ -67,9 +74,10 @@ export function getFnForDiameter(materialName, materials, diameter) {
   if (exact != null) return exact;
 
   // Fallback: nearest diameter with a defined value
-  const defined = STANDARD_DIAMETERS
-    .map(d => ({ d, v: table[String(d)] }))
-    .filter(x => x.v != null);
+  const defined = STANDARD_DIAMETERS.map((d) => ({
+    d,
+    v: table[String(d)],
+  })).filter((x) => x.v != null);
   if (defined.length === 0) return 0;
 
   defined.sort((a, b) => Math.abs(a.d - diameter) - Math.abs(b.d - diameter));
