@@ -10,6 +10,12 @@ import {
 } from "firebase/storage";
 import LoginScreen from "./LoginScreen.jsx";
 import UsersSection from "./UsersSection.jsx";
+import {
+  STANDARD_DIAMETERS,
+  normalizeFn,
+  resolveFnTable,
+  emptyFnTable,
+} from "./data/fnTable.js";
 
 // ─── STORAGE: see src/data/index.js ──────────────────────────────────────────
 
@@ -83,14 +89,16 @@ function Toast({ message, type, onClose }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, wide }) {
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center p-4"
       style={{ background: "rgba(4,8,20,0.82)", backdropFilter: "blur(6px)" }}
     >
-      <div className="w-full max-w-lg rounded-2xl border border-slate-700/60 bg-[#0d1b2e] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+      <div
+        className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl border border-slate-700/60 bg-[#0d1b2e] shadow-2xl max-h-[90vh] overflow-y-auto`}
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4 sticky top-0 bg-[#0d1b2e]">
           <h3 className="font-black text-white tracking-tight">{title}</h3>
           <button
             onClick={onClose}
@@ -344,11 +352,162 @@ function BrandSection({ brand, onChange }) {
   );
 }
 
+function FnTableEditor({ fn, onChange, materials, currentMaterialName }) {
+  const normalized = normalizeFn(fn);
+
+  const otherMaterials = Object.keys(materials).filter(
+    (n) => n !== currentMaterialName,
+  );
+
+  const setMode = (mode) => {
+    if (mode === "table") {
+      onChange({ mode: "table", table: emptyFnTable() });
+    } else {
+      onChange({
+        mode: "proportion",
+        proportionOf: otherMaterials[0] ?? "",
+        proportionPct: 100,
+      });
+    }
+  };
+
+  const setTableValue = (diameter, value) => {
+    const table = {
+      ...normalized.table,
+      [String(diameter)]: value === "" ? null : Number(value),
+    };
+    onChange({ mode: "table", table });
+  };
+
+  const setProportionOf = (name) =>
+    onChange({ ...normalized, proportionOf: name });
+  const setProportionPct = (pct) =>
+    onChange({ ...normalized, proportionPct: pct === "" ? "" : Number(pct) });
+
+  // Live preview of resolved values when in proportion mode
+  const previewTable =
+    normalized.mode === "proportion"
+      ? resolveFnTable(currentMaterialName || "__preview__", {
+          ...materials,
+          __preview__: { fn: normalized },
+        })
+      : null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
+          fn (mm/rev) por diâmetro
+        </span>
+        <div className="flex gap-1 rounded-lg border border-slate-700/60 p-0.5">
+          <button
+            type="button"
+            onClick={() => setMode("table")}
+            className={`rounded-md px-3 py-1 text-[11px] font-black transition ${normalized.mode === "table" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"}`}
+          >
+            Tabela
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("proportion")}
+            className={`rounded-md px-3 py-1 text-[11px] font-black transition ${normalized.mode === "proportion" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"}`}
+          >
+            Proporção
+          </button>
+        </div>
+      </div>
+
+      {normalized.mode === "table" ? (
+        <div className="overflow-x-auto rounded-xl border border-slate-700/40 bg-[#070f1e] p-3">
+          <div className="flex gap-2 min-w-max">
+            {STANDARD_DIAMETERS.map((d) => (
+              <div
+                key={d}
+                className="flex flex-col items-center gap-1 w-20 flex-shrink-0"
+              >
+                <span className="text-[12px] font-black text-slate-400">
+                  {d}mm
+                </span>
+                <input
+                  type="number"
+                  step="0.001"
+                  placeholder="—"
+                  className="w-full rounded-lg border border-slate-700/60 bg-[#0b1728] px-1.5 py-1.5 text-center text-xs text-white outline-none focus:border-cyan-500/60"
+                  value={normalized.table[String(d)] ?? ""}
+                  onChange={(e) => setTableValue(d, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Material de referência">
+              <select
+                className={inputCls}
+                value={normalized.proportionOf}
+                onChange={(e) => setProportionOf(e.target.value)}
+              >
+                {otherMaterials.length === 0 && (
+                  <option value="">Nenhum outro material cadastrado</option>
+                )}
+                {otherMaterials.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField
+              label="Proporção (%)"
+              hint="100% = valores idênticos ao material de referência"
+            >
+              <input
+                className={inputCls}
+                type="number"
+                step="1"
+                value={normalized.proportionPct}
+                onChange={(e) => setProportionPct(e.target.value)}
+              />
+            </FormField>
+          </div>
+          {previewTable && (
+            <div>
+              <p className="text-[10px] font-black tracking-widest text-slate-500 uppercase mb-1.5">
+                Prévia calculada
+              </p>
+              <div className="overflow-x-auto">
+                <div className="flex gap-2 min-w-max">
+                  {STANDARD_DIAMETERS.map((d) => (
+                    <div
+                      key={d}
+                      className="flex flex-col items-center gap-1 w-16 flex-shrink-0"
+                    >
+                      <span className="text-[10px] font-black text-slate-500">
+                        {d}mm
+                      </span>
+                      <div className="w-full rounded-lg border border-slate-800 bg-[#0b1728] px-1.5 py-1.5 text-center text-xs text-cyan-300 font-mono">
+                        {previewTable[String(d)] ?? "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MaterialsSection({ materials, isoClasses, onChange }) {
   const { isoOptions, isoColors } = buildIsoMeta(isoClasses);
   const [search, setSearch] = useState("");
   const [filterIso, setFilterIso] = useState("ALL");
   const [editing, setEditing] = useState(null); // { name, ...fields } or null
+  const [origName, setOrigName] = useState(null);
   const [isNew, setIsNew] = useState(false);
 
   const filtered = Object.entries(materials).filter(([name, m]) => {
@@ -363,15 +522,21 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
     setEditing({
       name: "",
       vc: 100,
-      fn: 0.2,
+      fn: { mode: "table", table: emptyFnTable() },
       life: 1000,
       iso: "P",
       materialClass: "",
     });
+    setOrigName(null);
     setIsNew(true);
   };
   const openEdit = (name) => {
-    setEditing({ name, ...materials[name] });
+    setEditing({
+      name,
+      ...materials[name],
+      fn: normalizeFn(materials[name].fn),
+    });
+    setOrigName(name);
     setIsNew(false);
   };
   const deleteMat = (name) => {
@@ -383,16 +548,22 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
     if (!editing.name.trim()) return;
     const { name, ...fields } = editing;
     const next = { ...materials };
-    if (!isNew) delete next[editing._origName || name];
+    if (!isNew && origName) delete next[origName];
     next[name] = {
       vc: Number(fields.vc),
-      fn: Number(fields.fn),
+      fn: fields.fn,
       life: Number(fields.life),
       iso: fields.iso,
       materialClass: fields.materialClass,
     };
     onChange(next);
     setEditing(null);
+  };
+
+  // Helper for the table preview column — shows a representative fn value (8mm, the most common reference)
+  const previewFn = (m) => {
+    const table = resolveFnTable("__row__", { ...materials, __row__: m });
+    return table["8"] ?? Object.values(table).find((v) => v != null) ?? "—";
   };
 
   return (
@@ -436,7 +607,7 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
               <Th>Material</Th>
               <Th>ISO</Th>
               <Th>Vc</Th>
-              <Th>fn</Th>
+              <Th>fn (8mm)</Th>
               <Th>Vida</Th>
               <Th>Classe</Th>
               <Th></Th>
@@ -453,7 +624,14 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                   <IsoBadge iso={m.iso} isoColors={isoColors} />
                 </td>
                 <td className="px-3 py-2.5 text-cyan-300 font-mono">{m.vc}</td>
-                <td className="px-3 py-2.5 text-cyan-300 font-mono">{m.fn}</td>
+                <td className="px-3 py-2.5 text-cyan-300 font-mono">
+                  {previewFn(m)}
+                  {normalizeFn(m.fn).mode === "proportion" && (
+                    <span className="ml-1.5 text-[9px] font-black text-amber-400 align-middle">
+                      %
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2.5 text-slate-300 font-mono">
                   {m.life}
                 </td>
@@ -483,10 +661,11 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
 
       {editing && (
         <Modal
+          wide
           title={isNew ? "Novo Material" : `Editar: ${editing.name}`}
           onClose={() => setEditing(null)}
         >
-          <div className="space-y-3">
+          <div className="space-y-4">
             <FormField label="Nome do material">
               <input
                 className={inputCls}
@@ -496,7 +675,7 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                 }
               />
             </FormField>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <FormField label="Vc (m/min)">
                 <input
                   className={inputCls}
@@ -504,17 +683,6 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                   value={editing.vc}
                   onChange={(e) =>
                     setEditing((p) => ({ ...p, vc: e.target.value }))
-                  }
-                />
-              </FormField>
-              <FormField label="fn (mm/rev)">
-                <input
-                  className={inputCls}
-                  type="number"
-                  step="0.01"
-                  value={editing.fn}
-                  onChange={(e) =>
-                    setEditing((p) => ({ ...p, fn: e.target.value }))
                   }
                 />
               </FormField>
@@ -542,6 +710,14 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                 </select>
               </FormField>
             </div>
+
+            <FnTableEditor
+              fn={editing.fn}
+              onChange={(fn) => setEditing((p) => ({ ...p, fn }))}
+              materials={materials}
+              currentMaterialName={origName}
+            />
+
             <FormField label="Classe do material">
               <input
                 className={inputCls}
@@ -636,17 +812,17 @@ function IsoClassesSection({ isoClasses, onChange }) {
         </p>
         <div className="flex gap-2">
           <input
-            className={inputCls + "flex-1 text-center font-black uppercase"}
+            className={inputCls + " flex-1"}
+            placeholder="Descrição da classe..."
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+          />
+          <input
+            className={inputCls + " w-20 text-center font-black uppercase"}
             placeholder="Ex: Q"
             maxLength={4}
             value={newKey}
             onChange={(e) => setNewKey(e.target.value.toUpperCase())}
-          />
-          <input
-            className={inputCls}
-            placeholder="Descrição da classe..."
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
           />
           <button
             onClick={addEntry}
