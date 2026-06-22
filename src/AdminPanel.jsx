@@ -244,7 +244,7 @@ function BrandSection({ brand, onChange }) {
         <p className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
           Logotipo
         </p>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           {local.logoUrl ? (
             <div className="relative flex-shrink-0">
               <img
@@ -258,7 +258,7 @@ function BrandSection({ brand, onChange }) {
               Sem logo
             </div>
           )}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-shrink-0 flex-col gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -287,7 +287,7 @@ function BrandSection({ brand, onChange }) {
               </button>
             )}
           </div>
-          <div className="flex-1 text-xs text-slate-600 leading-relaxed">
+          <div className="min-w-[140px] flex-1 basis-full text-xs leading-relaxed text-slate-600 sm:basis-0">
             PNG, JPG, SVG ou WebP
             <br />
             Máximo 2 MB
@@ -336,7 +336,7 @@ function BrandSection({ brand, onChange }) {
           />
         </FormField>
       </div>
-      <div className="mt-2 rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
+      {/* <div className="mt-2 rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
         <p className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
           Configurações de E-mail e API
         </p>
@@ -370,7 +370,7 @@ function BrandSection({ brand, onChange }) {
             onChange={(e) => set("fallbackEndpoint", e.target.value)}
           />
         </FormField>
-      </div>
+      </div>*/}
       <SaveButton onClick={handleSave} />
     </div>
   );
@@ -1795,7 +1795,6 @@ function AdminPanelInner() {
                 </span>
               </div>
             ))}
-            <div className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black text-emerald-400 tracking-wider"></div>
             <div className="hidden sm:flex flex-col items-end gap-1">
               <span className="text-[10px] text-slate-400 truncate max-w-[140px]">
                 {currentUser?.email}
