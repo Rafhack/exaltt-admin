@@ -1164,9 +1164,19 @@ function DepthsSection({ depths, onChange }) {
               <input
                 className={inputCls}
                 value={editing.key}
-                onChange={(e) =>
-                  setEditing((p) => ({ ...p, key: e.target.value }))
-                }
+                onChange={(e) => {
+                  const inferredLimit = Number(
+                    e.target.value.toLowerCase().split("x")[0],
+                  );
+                  return setEditing((p) => ({
+                    ...p,
+                    key: e.target.value,
+                    limiter:
+                      Number.isFinite(inferredLimit) && inferredLimit >= 0
+                        ? inferredLimit
+                        : p.limiter,
+                  }));
+                }}
                 disabled={!isNew}
               />
             </FormField>
