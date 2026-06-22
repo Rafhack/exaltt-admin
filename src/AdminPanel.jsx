@@ -1061,7 +1061,7 @@ function DepthsSection({ depths, onChange }) {
   const [isNew, setIsNew] = useState(false);
 
   const openNew = () => {
-    setEditing({ key: "", vc: 1.0, fn: 1.0, life: 1.0, risk: 95 });
+    setEditing({ key: "", vc: 1.0, fn: 1.0, life: 1.0, limiter: 1, risk: 95 });
     setIsNew(true);
   };
   const save = () => {
@@ -1073,6 +1073,7 @@ function DepthsSection({ depths, onChange }) {
         vc: Number(fields.vc),
         fn: Number(fields.fn),
         life: Number(fields.life),
+        limiter: Number(fields.limiter),
         risk: Number(fields.risk),
       },
     };
@@ -1108,6 +1109,7 @@ function DepthsSection({ depths, onChange }) {
               <Th>Fator Vc</Th>
               <Th>Fator fn</Th>
               <Th>Fator Vida</Th>
+              <Th>Fator Limitador</Th>
               <Th>Risco (%)</Th>
               <Th></Th>
             </tr>
@@ -1123,6 +1125,9 @@ function DepthsSection({ depths, onChange }) {
                 <td className="px-3 py-2.5 font-mono text-slate-200">{d.fn}</td>
                 <td className="px-3 py-2.5 font-mono text-slate-200">
                   {d.life}
+                </td>
+                <td className="px-3 py-2.5 font-mono text-slate-200">
+                  {d.limiter}
                 </td>
                 <td className="px-3 py-2.5">
                   <RiskBar value={d.risk} />
@@ -1188,6 +1193,8 @@ function DepthsSection({ depths, onChange }) {
                   }
                 />
               </FormField>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
               <FormField label="Fator Vida">
                 <input
                   className={inputCls}
@@ -1196,6 +1203,17 @@ function DepthsSection({ depths, onChange }) {
                   value={editing.life}
                   onChange={(e) =>
                     setEditing((p) => ({ ...p, life: e.target.value }))
+                  }
+                />
+              </FormField>
+              <FormField label="Fator Limitador">
+                <input
+                  className={inputCls}
+                  type="number"
+                  step="1"
+                  value={editing.limiter}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, limiter: e.target.value }))
                   }
                 />
               </FormField>
