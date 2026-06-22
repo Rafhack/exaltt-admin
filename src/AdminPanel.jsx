@@ -115,10 +115,34 @@ function Modal({ title, onClose, children, wide }) {
 
 // ─── FIELD COMPONENTS ─────────────────────────────────────────────────────────
 function FormField({ label, children, hint }) {
+  const wrapRef = useRef(null);
+  const textRef = useRef(null);
+  const [overflowPx, setOverflowPx] = useState(0);
+
+  useEffect(() => {
+    const measure = () => {
+      if (!wrapRef.current || !textRef.current) return;
+      const diff = textRef.current.scrollWidth - wrapRef.current.clientWidth;
+      setOverflowPx(diff > 0 ? diff : 0);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [label]);
+
   return (
-    <label className="block">
-      <span className="mb-1.5 block text-[11px] font-black tracking-widest text-slate-400 uppercase">
-        {label}
+    <label className="field-label block">
+      <span
+        ref={wrapRef}
+        className="mb-1.5 block overflow-hidden whitespace-nowrap text-[11px] font-black tracking-widest text-slate-400 uppercase"
+        style={{ "--field-label-overflow": `-${overflowPx}px` }}
+      >
+        <span
+          ref={textRef}
+          className={`field-label-inner inline-block ${overflowPx > 0 ? "field-label-scrollable" : ""}`}
+        >
+          {label}
+        </span>
       </span>
       {children}
       {hint && <p className="mt-1 text-[10px] text-slate-600">{hint}</p>}
@@ -1716,6 +1740,16 @@ function AdminPanelInner() {
         .scanline {
           background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,200,255,0.015) 2px, rgba(0,200,255,0.015) 4px);
           pointer-events: none;
+        }
+        .field-label-inner { transition: transform 0.2s ease; }
+        .field-label-scrollable.field-label-inner { transform: translateX(0); }
+        .field-label:focus-within .field-label-scrollable {
+          animation: field-label-marquee 5s linear 0.5s infinite;
+        }
+        @keyframes field-label-marquee {
+          0%, 15%  { transform: translateX(0); }
+          50%, 65% { transform: translateX(var(--field-label-overflow, 0)); }
+          100%     { transform: translateX(0); }
         }
       `}</style>
 
