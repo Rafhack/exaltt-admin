@@ -10,6 +10,7 @@ import {
 } from "firebase/storage";
 import LoginScreen from "./LoginScreen.jsx";
 import UsersSection from "./UsersSection.jsx";
+import ToolsSection from "./ToolsSection.jsx";
 import {
   STANDARD_DIAMETERS,
   normalizeFn,
@@ -1643,6 +1644,7 @@ const NAV_ITEMS = [
   { id: "machines", icon: "🏭", label: "Máquinas" },
   { id: "export", icon: "💾", label: "Export/Import" },
   { id: "users", icon: "👥", label: "Usuários" },
+  { id: "tools", icon: "🔧", label: "Ferramentas" },
 ];
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
@@ -1951,6 +1953,7 @@ function AdminPanelInner() {
               />
             )}
             {activeTab === "users" && <UsersSection />}
+            {activeTab === "tools" && <ToolsSection />}
           </div>
         </main>
       </div>
