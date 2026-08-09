@@ -1,192 +1,201 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+/**
+ * ToolsSection — Admin panel section for importing EXALTT tools from an XLSX file.
+ *
+ * The XLSX is a TopTools ERP export with the format shown in:
+ *   Relatorio_lista_de_produtos_EXALTT_sample.xlsx
+ *
+ * Relevant columns (headers have trailing spaces — trimmed on read):
+ *   [0] Codigo       — tool code, e.g. EX0300-03002-01
+ *   [1] Descricao    — description, e.g. BRP MD 2C RI D3X16XD6X52L
+ *   [4] Grupo        — product group
+ *   [5] Preco Lista  — list price
+ *   [12] Desc Grupo  — group description
+ *   [16] Nome Empresa — company (always "TOP TOOLS" for EXALTT tools)
+ *
+ * EXALTT tools are identified by codes that start with "EX".
+ * The ERP export may contain duplicate rows (one per Filial/branch) — deduped by code.
+ *
+ * Code format: EX0300-03002-01
+ *   Segment 0: EX<model>    — "EX" prefix + 4-digit model number
+ *   Segment 1: <diam><flutes>  — 4-digit diameter (÷100 = mm) + 1-digit flute count
+ *   Segment 2: <revision>   — ignored for now
+ *
+ * Description format: BRP MD 2C RI D3X16XD6X52L
+ *   D<n>       — nominal diameter in mm
+ *   XD<n>      — depth-to-diameter ratio (XD6 = 6xD)
+ *   <n>C       — number of cutting edges
+ *   RI / RE    — internal / external coolant
+ *   X<n>L      — total length in mm
+ */
+
+import { useState, useRef, useCallback } from "react";
 import { useAuth } from "./AuthContext.jsx";
+import * as XLSX from "xlsx";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-// ─── TOOL SCHEMA ──────────────────────────────────────────────────────────────
-// A parsed tool object. All fields are derived from the tool's name/code.
-//
-// {
-//   code:        string   — original tool code (e.g. "HPC-12-5XD-P")
-//   brand:       string   — "EXALTT" | "OTHER"
-//   line:        string   — product line (e.g. "HPC", "SPC")
-//   diameter:    number   — nominal diameter in mm
-//   depthRatio:  string   — depth-to-diameter ratio (e.g. "5xD", "8xD")
-//   isoClasses:  string[] — applicable ISO material classes (e.g. ["P", "M"])
-//   coating:     string   — coating type if present (e.g. "TiAlN", "none")
-//   coolant:     string   — "internal" | "external" | "none"
-//   flutes:      number   — number of flutes (0 = unknown)
-//   raw:         Object   — all original CSV columns, unmodified
-// }
+// ─── CODE PARSER ─────────────────────────────────────────────────────────────
+// Format: EX0300-03002-01
+const CODE_RE = /^(EX[A-Z0-9]{2})([A-Z0-9]{2})-(\d{3})(\d{2})-([A-Z0-9]+)$/i;
 
-// ─── MOCK PARSER ──────────────────────────────────────────────────────────────
-// This function stands in for the real CSV parser until the actual file format
-// is known. It receives the raw CSV text and returns an array of raw row objects
-// (one per line, keyed by header), then maps each to a structured tool object.
-//
-// REPLACE `parseRow` and `parseHeaders` with the real logic once the CSV spec
-// is available. Everything else (chunking, filtering, progress) stays the same.
+function parseToolCode(rawCode) {
+  const code = rawCode.trim().toUpperCase();
+  const m = CODE_RE.exec(code);
+  if (!m) return null;
 
-const EXALTT_BRANDS = ["EXALTT", "HPC", "SPC", "XTA", "XTH", "XTS", "XTL"];
-const DEPTH_RATIO_RE = /(\d+)\s*[xX×]\s*[dD]/;
-const DIAMETER_RE = /[_\-\s](\d+(?:[.,]\d+)?)\s*(?:mm)?(?:[_\-\s]|$)/;
-const FLUTES_RE = /(\d+)\s*FL/i;
-const ISO_CLASS_RE = /\b([PMKNS H]{1})\b/g;
-const COATING_KEYWORDS = ["TiAlN", "TiCN", "TiN", "AlCrN", "DLC", "nACo"];
-const COOLANT_KEYWORDS_INT = ["IK", "INT", "IC", "KH"];
-const COOLANT_KEYWORDS_EXT = ["EXT", "EC"];
+  const [, series, material, diamRaw, depthRatio] = m;
+  const diameter = Number(diamRaw) / 10;
+  const depth = `${Number(depthRatio)}xD`;
 
-function isExalttTool(row, headers) {
-  // Heuristic until we know the real CSV structure.
-  // Tries common column names for brand/supplier/description.
-  const brandCols = ["brand", "marca", "supplier", "fabricante", "fornecedor"];
-  const descCols  = ["description", "descricao", "descricao_completa", "nome", "code", "codigo", "item"];
-
-  for (const col of brandCols) {
-    const val = (row[col] ?? row[col.toUpperCase()] ?? "").toString().toUpperCase();
-    if (EXALTT_BRANDS.some(b => val.includes(b))) return true;
-  }
-  for (const col of descCols) {
-    const val = (row[col] ?? row[col.toUpperCase()] ?? "").toString().toUpperCase();
-    if (EXALTT_BRANDS.some(b => val.includes(b))) return true;
-  }
-  return false;
+  return { code, series, material, diameter, depth };
 }
 
-function deriveToolProperties(row, headers) {
-  // Build a string to scan from the most descriptive columns available.
-  const nameStr = [
-    row["description"] ?? row["descricao"] ?? row["nome"] ?? row["DESCRICAO"] ?? "",
-    row["code"] ?? row["codigo"] ?? row["item"] ?? row["CODIGO"] ?? "",
-    row["part_number"] ?? row["partnumber"] ?? "",
-  ].join(" ").toUpperCase();
+// ─── DESCRIPTION PARSER ──────────────────────────────────────────────────────
+// Format: BRP MD 2C RI D3X16XD6X52L
+function parseDescription(desc) {
+  const s = (desc ?? "").toUpperCase();
 
-  // Diameter
-  const diam = DIAMETER_RE.exec(nameStr);
-  const diameter = diam ? Number(diam[1].replace(",", ".")) : 0;
+  const shankDiamMatch = s.match(/XD(\d+)X?/);
+  const lengthMatch = s.match(/X(\d+)L/);
 
-  // Depth ratio
-  const dr = DEPTH_RATIO_RE.exec(nameStr);
-  const depthRatio = dr ? `${dr[1]}xD` : "5xD";
-
-  // ISO classes
-  const isoMatches = new Set();
-  let m;
-  while ((m = ISO_CLASS_RE.exec(nameStr)) !== null) {
-    if ("PMKNSH".includes(m[1])) isoMatches.add(m[1]);
-  }
-  const isoClasses = isoMatches.size > 0 ? [...isoMatches] : ["P"];
-
-  // Coating
-  const coating = COATING_KEYWORDS.find(c => nameStr.includes(c.toUpperCase())) ?? "none";
-
-  // Coolant
-  const coolant = COOLANT_KEYWORDS_INT.some(k => nameStr.includes(k))
+  const coolant = /\bRI\b/.test(s)
     ? "internal"
-    : COOLANT_KEYWORDS_EXT.some(k => nameStr.includes(k))
-    ? "external"
-    : "none";
+    : /\bRE\b/.test(s)
+      ? "external"
+      : "none";
 
-  // Flutes
-  const fl = FLUTES_RE.exec(nameStr);
-  const flutes = fl ? Number(fl[1]) : 0;
-
-  // Line/code — use description or code column, fallback to first non-empty value
-  const code = (row["code"] ?? row["codigo"] ?? row["item"] ?? row["CODIGO"] ?? Object.values(row).find(v => v) ?? "UNKNOWN").toString().trim();
-  const line = EXALTT_BRANDS.find(b => nameStr.includes(b)) ?? "HPC";
-
-  return { code, brand: "EXALTT", line, diameter, depthRatio, isoClasses, coating, coolant, flutes, raw: row };
+  return {
+    shankDiam: shankDiamMatch ? Number(shankDiamMatch[1]) : null,
+    totalLength: lengthMatch ? Number(lengthMatch[1]) : null,
+    coolant,
+  };
 }
 
-// Parse CSV text into array of { [header]: value } objects.
-function parseHeaders(firstLine) {
-  return firstLine.split(",").map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ""));
-}
+// ─── XLSX COLUMN INDICES (from the real ERP export) ──────────────────────────
+const COL = {
+  code: 0, // Codigo
+  desc: 1, // Descricao
+  listPrice: 5, // Preco Lista
+};
 
-function parseRow(line, headers) {
-  // Simple RFC-4180-style parser: handle quoted fields with commas.
-  const values = [];
-  let cur = "", inQuote = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"' && (i === 0 || line[i - 1] !== "\\")) {
-      inQuote = !inQuote;
-    } else if (ch === "," && !inQuote) {
-      values.push(cur.trim());
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  values.push(cur.trim());
-  const row = {};
-  headers.forEach((h, i) => { row[h] = (values[i] ?? "").replace(/^["']|["']$/g, ""); });
-  return row;
-}
+// ─── ASYNC XLSX PARSER ───────────────────────────────────────────────────────
+// SheetJS reads the whole file synchronously, but we process rows in async
+// chunks so the progress bar updates and the UI stays responsive.
 
-// Async chunked parser — yields control back to the browser every CHUNK_SIZE rows
-// so the UI stays responsive on massive files.
-const CHUNK_SIZE = 200;
+const CHUNK_SIZE = 500;
 
-async function parseCSVAsync(text, onProgress) {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
+async function parseXLSXAsync(file, onProgress) {
+  // 1. Read the file as an ArrayBuffer
+  const buffer = await file.arrayBuffer();
 
-  const headers = parseHeaders(lines[0]);
-  const total = lines.length - 1;
-  const allTools = [];
+  // 2. Parse with SheetJS — dense mode gives us a flat array per row
+  const wb = XLSX.read(buffer, { type: "array", dense: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+  if (rows.length < 2) throw new Error("Arquivo vazio ou sem dados.");
+
+  // 3. Skip header row; collect data rows
+  const dataRows = rows.slice(1);
+  const total = dataRows.length;
+  const seenCodes = new Set();
+  const tools = [];
   let processed = 0;
 
-  for (let i = 1; i < lines.length; i += CHUNK_SIZE) {
-    const chunk = lines.slice(i, i + CHUNK_SIZE);
-    for (const line of chunk) {
-      if (!line.trim()) continue;
-      const row = parseRow(line, headers);
-      if (isExalttTool(row, headers)) {
-        allTools.push(deriveToolProperties(row, headers));
-      }
+  for (let i = 0; i < dataRows.length; i += CHUNK_SIZE) {
+    const chunk = dataRows.slice(i, i + CHUNK_SIZE);
+
+    for (const row of chunk) {
+      const rawCode = String(row[COL.code] ?? "").trim();
       processed++;
+
+      // Filter: must start with "EX"
+      if (!rawCode.toUpperCase().startsWith("EX")) continue;
+
+      // Deduplicate: ERP exports the same product once per Filial (branch)
+      const normCode = rawCode.toUpperCase();
+      if (seenCodes.has(normCode)) continue;
+      seenCodes.add(normCode);
+
+      // Parse the code
+      const parsed = parseToolCode(rawCode);
+      if (!parsed) {
+        console.log(`Failed to parse ${rawCode}`);
+        continue;
+      }
+
+      // Parse the description for richer properties
+      const rawDesc = String(row[COL.desc] ?? "").trim();
+      const fromDesc = parseDescription(rawDesc);
+
+      tools.push({
+        code: parsed.code,
+        series: parsed.series,
+        diameter: parsed.diameter,
+        material: parsed.material,
+        depthRatio: parsed.depth ?? "—",
+        totalLength: fromDesc.totalLength ?? null,
+        coolant: fromDesc.coolant,
+        description: rawDesc,
+        listPrice: String(row[COL.listPrice] ?? "").trim(),
+      });
     }
-    onProgress(Math.min(100, Math.round((processed / total) * 100)));
-    // Yield to the browser event loop between chunks
-    await new Promise(r => setTimeout(r, 0));
+
+    onProgress(Math.min(99, Math.round((processed / total) * 100)));
+    await new Promise((r) => setTimeout(r, 0));
   }
 
-  return allTools;
+  onProgress(100);
+  return { tools, totalRows: total };
 }
 
-// ─── ISO COLOR MAP ────────────────────────────────────────────────────────────
-const ISO_COLORS = { P: "#3b82f6", M: "#8b5cf6", K: "#f59e0b", N: "#10b981", S: "#ef4444", H: "#ec4899" };
-function IsoBadge({ iso }) {
-  const color = ISO_COLORS[iso] ?? "#64748b";
+// ─── UI HELPERS ──────────────────────────────────────────────────────────────
+const COOLANT_LABELS = {
+  internal: "Interna",
+  external: "Externa",
+  none: "Sem refrigeração",
+};
+const COOLANT_COLORS = {
+  internal: "#3b82f6",
+  external: "#10b981",
+  none: "#475569",
+};
+
+function CoolantBadge({ coolant }) {
+  const color = COOLANT_COLORS[coolant] ?? COOLANT_COLORS.none;
+  const label = COOLANT_LABELS[coolant] ?? "—";
   return (
-    <span style={{ background: color + "22", color, border: `1px solid ${color}55` }}
-      className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-black">
-      {iso}
+    <span
+      style={{
+        background: color + "22",
+        color,
+        border: `1px solid ${color}55`,
+      }}
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black tracking-wider"
+    >
+      {label}
     </span>
   );
 }
 
-// ─── TOOLS SECTION ────────────────────────────────────────────────────────────
+// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function ToolsSection() {
   const { token } = useAuth();
 
-  // Upload + parsing state
-  const [phase, setPhase]         = useState("idle"); // idle | parsing | done | saving | saved
-  const [progress, setProgress]   = useState(0);
+  const [phase, setPhase] = useState("idle"); // idle|parsing|done|saving|saved
+  const [progress, setProgress] = useState(0);
   const [parseError, setParseError] = useState("");
-  const [fileName, setFileName]   = useState("");
-  const [rawCount, setRawCount]   = useState(0);   // total CSV rows before filtering
-  const [tools, setTools]         = useState([]);   // parsed EXALTT tools
+  const [fileName, setFileName] = useState("");
+  const [rawCount, setRawCount] = useState(0);
+  const [tools, setTools] = useState([]);
 
-  // Table state
-  const [search, setSearch]       = useState("");
-  const [filterIso, setFilterIso] = useState("ALL");
-  const [filterLine, setFilterLine] = useState("ALL");
+  const [search, setSearch] = useState("");
+  const [filterDepth, setFilterDepth] = useState("ALL");
+  const [filterCoolant, setFilterCoolant] = useState("ALL");
+  const [filterMaterial, setFilterMaterial] = useState("ALL");
   const [sortField, setSortField] = useState("diameter");
-  const [sortDir, setSortDir]     = useState("asc");
+  const [sortDir, setSortDir] = useState("asc");
 
-  // Save state
   const [saveError, setSaveError] = useState("");
   const [savedCount, setSavedCount] = useState(0);
 
@@ -195,8 +204,8 @@ export default function ToolsSection() {
   const handleFile = useCallback(async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.name.match(/\.csv$/i)) {
-      setParseError("Apenas arquivos .csv são suportados.");
+    if (!/\.xlsx$/i.test(file.name)) {
+      setParseError("Apenas arquivos .xlsx são suportados.");
       return;
     }
 
@@ -209,12 +218,11 @@ export default function ToolsSection() {
     setSaveError("");
 
     try {
-      const text = await file.text();
-      const lineCount = text.split(/\r?\n/).filter(l => l.trim()).length - 1;
-      setRawCount(lineCount);
-
-      const parsed = await parseCSVAsync(text, setProgress);
-
+      const { tools: parsed, totalRows } = await parseXLSXAsync(
+        file,
+        setProgress,
+      );
+      setRawCount(totalRows);
       setTools(parsed);
       setPhase("done");
     } catch (err) {
@@ -222,7 +230,6 @@ export default function ToolsSection() {
       setPhase("idle");
     }
 
-    // Reset the file input so the same file can be re-uploaded if needed
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -248,7 +255,7 @@ export default function ToolsSection() {
       setPhase("saved");
     } catch (err) {
       setSaveError(err.message);
-      setPhase("done"); // let them retry
+      setPhase("done");
     }
   };
 
@@ -262,134 +269,201 @@ export default function ToolsSection() {
     setSaveError("");
     setSavedCount(0);
     setSearch("");
-    setFilterIso("ALL");
-    setFilterLine("ALL");
+    setFilterDepth("ALL");
+    setFilterCoolant("ALL");
+    setFilterMaterial("ALL");
   };
 
-  // Derived table data
-  const lines = [...new Set(tools.map(t => t.line))].sort();
-  const isoOptions = [...new Set(tools.flatMap(t => t.isoClasses))].sort();
+  // Derived filter options
+  const depthOptions = [
+    ...new Set(tools.map((t) => t.depthRatio).filter((d) => d && d !== "—")),
+  ].sort((a, b) => {
+    return Number(a) - Number(b);
+  });
+  const materialOptions = [...new Set(tools.map((t) => t.material))].sort(
+    (a, b) => {
+      return Number(a) - Number(b);
+    },
+  );
+  const coolantOptions = [...new Set(tools.map((t) => t.coolant))].sort();
 
-  const filtered = tools.filter(t => {
+  const filtered = tools.filter((t) => {
     const q = search.toLowerCase();
-    const matchSearch = !q || t.code.toLowerCase().includes(q) || t.line.toLowerCase().includes(q);
-    const matchIso = filterIso === "ALL" || t.isoClasses.includes(filterIso);
-    const matchLine = filterLine === "ALL" || t.line === filterLine;
-    return matchSearch && matchIso && matchLine;
+    const matchSearch =
+      !q ||
+      t.code.toLowerCase().includes(q) ||
+      t.description.toLowerCase().includes(q);
+    const matchDepth = filterDepth === "ALL" || t.depthRatio === filterDepth;
+    const matchCoolant = filterCoolant === "ALL" || t.coolant === filterCoolant;
+    const matchMaterial =
+      filterMaterial === "ALL" || t.material === filterMaterial;
+    return matchSearch && matchDepth && matchCoolant && matchMaterial;
   });
 
   const sorted = [...filtered].sort((a, b) => {
-    let av = a[sortField] ?? "", bv = b[sortField] ?? "";
-    if (typeof av === "number" && typeof bv === "number") return sortDir === "asc" ? av - bv : bv - av;
-    return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    let av = a[sortField] ?? "",
+      bv = b[sortField] ?? "";
+    if (typeof av === "number" && typeof bv === "number")
+      return sortDir === "asc" ? av - bv : bv - av;
+    return sortDir === "asc"
+      ? String(av).localeCompare(String(bv))
+      : String(bv).localeCompare(String(av));
   });
 
   const toggleSort = (field) => {
-    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("asc"); }
+    if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortField(field);
+      setSortDir("asc");
+    }
   };
 
   const SortTh = ({ field, children }) => (
-    <th onClick={() => toggleSort(field)}
-      className="px-3 py-2.5 text-left text-[10px] font-black tracking-widest text-slate-500 uppercase cursor-pointer hover:text-slate-300 transition select-none">
-      {children} {sortField === field ? (sortDir === "asc" ? "↑" : "↓") : ""}
+    <th
+      onClick={() => toggleSort(field)}
+      className="px-3 py-2.5 text-left text-[10px] font-black tracking-widest text-slate-500 uppercase cursor-pointer hover:text-slate-300 transition select-none whitespace-nowrap"
+    >
+      {children}
+      {sortField === field ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
     </th>
   );
 
-  const inputCls = "w-full rounded-xl border border-slate-700/60 bg-[#070f1e] px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/10 placeholder:text-slate-600";
+  const inputCls =
+    "w-full rounded-xl border border-slate-700/60 bg-[#070f1e] px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/10 placeholder:text-slate-600";
+  const isActive = phase !== "idle";
+  const formatter = new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    trailingZero: "stripIfInteger",
+  });
 
   return (
     <div className="space-y-5">
-
-      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      {/* ── HEADER ────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 pb-2 border-b border-slate-800/60">
         <span className="text-2xl">🔧</span>
         <div className="flex-1 min-w-0">
-          <h2 className="font-black text-white tracking-tight">Ferramentas EXALTT</h2>
+          <h2 className="font-black text-white tracking-tight">
+            Ferramentas EXALTT
+          </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Importe um CSV com o catálogo completo de ferramentas e salve apenas as EXALTT.
+            Importe o relatório XLSX do ERP. Apenas ferramentas com código{" "}
+            <code className="text-cyan-400 font-mono">EX…</code> são importadas.
+            Duplicatas por filial são removidas automaticamente.
           </p>
         </div>
-        {phase !== "idle" && (
-          <button onClick={handleReset}
-            className="shrink-0 rounded-xl border border-slate-700/60 bg-slate-800/60 px-3 py-1.5 text-xs font-black text-slate-300 hover:bg-slate-700 transition">
+        {isActive && (
+          <button
+            onClick={handleReset}
+            className="shrink-0 rounded-xl border border-slate-700/60 bg-slate-800/60 px-3 py-1.5 text-xs font-black text-slate-300 hover:bg-slate-700 transition"
+          >
             Nova importação
           </button>
         )}
       </div>
 
-      {/* ── UPLOAD ZONE ────────────────────────────────────────────────────── */}
-      {phase === "idle" && (
+      {/* ── UPLOAD ZONE ───────────────────────────────────────────────────── */}
+      {!isActive && (
         <div>
-          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
-          <button onClick={() => fileInputRef.current?.click()}
-            className="w-full rounded-2xl border-2 border-dashed border-slate-700/60 bg-[#070f1e] px-6 py-12 text-center transition hover:border-cyan-500/40 hover:bg-cyan-500/5 group">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            onChange={handleFile}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full rounded-2xl border-2 border-dashed border-slate-700/60 bg-[#070f1e] px-6 py-12 text-center transition hover:border-cyan-500/40 hover:bg-cyan-500/5 group"
+          >
             <div className="text-4xl mb-3">📂</div>
             <p className="font-black text-white group-hover:text-cyan-300 transition">
-              Clique para selecionar o arquivo CSV
+              Clique para selecionar o arquivo XLSX
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              O arquivo pode ser grande — o processamento é feito de forma assíncrona para não travar a tela.
+              Relatório ERP —{" "}
+              <span className="font-mono">
+                Relatorio_lista_de_produtos_EXALTT.xlsx
+              </span>
+              <br />
+              Arquivos grandes são processados de forma assíncrona.
             </p>
           </button>
           {parseError && (
-            <p className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-400">
+            <p className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-400">
               {parseError}
             </p>
           )}
         </div>
       )}
 
-      {/* ── PARSING PROGRESS ───────────────────────────────────────────────── */}
+      {/* ── PARSING PROGRESS ──────────────────────────────────────────────── */}
       {phase === "parsing" && (
         <div className="rounded-2xl border border-slate-800 bg-[#070f1e] p-6 space-y-4">
           <div className="flex items-center gap-3">
             <div className="h-5 w-5 rounded-full border-2 border-cyan-500/30 border-t-cyan-500 animate-spin shrink-0" />
             <div>
-              <p className="font-black text-white">Processando {fileName}</p>
+              <p className="font-black text-white">{fileName}</p>
               <p className="text-xs text-slate-400 mt-0.5">
-                {rawCount > 0 && `${rawCount.toLocaleString("pt-BR")} linhas detectadas · `}Filtrando ferramentas EXALTT…
+                Lendo planilha e filtrando ferramentas EXALTT…
               </p>
             </div>
           </div>
           <div className="space-y-1.5">
             <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-              <div className="h-full rounded-full bg-cyan-500 transition-all duration-200"
-                style={{ width: `${progress}%` }} />
+              <div
+                className="h-full rounded-full bg-cyan-500 transition-all duration-150"
+                style={{ width: `${progress}%` }}
+              />
             </div>
-            <p className="text-right text-[11px] text-slate-500 font-mono">{progress}%</p>
+            <p className="text-right text-[11px] text-slate-500 font-mono">
+              {progress}%
+            </p>
           </div>
         </div>
       )}
 
-      {/* ── RESULT SUMMARY & FILTERS ───────────────────────────────────────── */}
+      {/* ── RESULT ────────────────────────────────────────────────────────── */}
       {(phase === "done" || phase === "saving" || phase === "saved") && (
         <div className="space-y-4">
-
           {/* Summary bar */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex-1 min-w-0 rounded-xl border border-slate-800 bg-[#070f1e] px-4 py-3">
-              <p className="text-xs text-slate-500">
-                Arquivo: <span className="text-slate-300 font-bold">{fileName}</span>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                <span className="font-bold text-slate-200">{fileName}</span>
                 {" · "}
-                Total de linhas: <span className="text-slate-300 font-bold">{rawCount.toLocaleString("pt-BR")}</span>
+                {rawCount.toLocaleString("pt-BR")} linhas no arquivo
                 {" · "}
-                Ferramentas EXALTT encontradas:{" "}
-                <span className="text-cyan-300 font-black">{tools.length.toLocaleString("pt-BR")}</span>
+                <span className="text-cyan-300 font-black">
+                  {tools.length.toLocaleString("pt-BR")} ferramentas EXALTT
+                  únicas
+                </span>
                 {filtered.length !== tools.length && (
-                  <> · Exibindo: <span className="text-amber-300 font-black">{filtered.length}</span></>
+                  <>
+                    {" "}
+                    ·{" "}
+                    <span className="text-amber-300 font-black">
+                      {filtered.length.toLocaleString("pt-BR")}
+                    </span>{" "}
+                    exibidas
+                  </>
                 )}
               </p>
             </div>
 
             {phase === "saved" ? (
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-black text-emerald-400">
-                ✓ {savedCount} ferramentas salvas
+              <div className="shrink-0 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-black text-emerald-400">
+                ✓ {savedCount.toLocaleString("pt-BR")} ferramentas salvas
               </div>
             ) : (
-              <button onClick={handleSave} disabled={phase === "saving" || !tools.length}
-                className="shrink-0 rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-black text-black hover:bg-cyan-400 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                {phase === "saving" ? "Salvando…" : `Salvar ${tools.length.toLocaleString("pt-BR")} ferramentas`}
+              <button
+                onClick={handleSave}
+                disabled={phase === "saving" || !tools.length}
+                className="shrink-0 rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-black text-black hover:bg-cyan-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {phase === "saving"
+                  ? "Salvando…"
+                  : `Salvar ${tools.length.toLocaleString("pt-BR")} ferramentas`}
               </button>
             )}
           </div>
@@ -402,20 +476,47 @@ export default function ToolsSection() {
 
           {/* Filters */}
           <div className="flex flex-col gap-2 sm:flex-row">
-            <input className={inputCls + " flex-1"} placeholder="Buscar por código ou linha…"
-              value={search} onChange={e => setSearch(e.target.value)} />
-            <div className="flex gap-1 flex-wrap">
-              {["ALL", ...isoOptions].map(iso => (
-                <button key={iso} onClick={() => setFilterIso(iso)}
-                  className={`rounded-lg px-3 py-2 text-[11px] font-black transition
-                    ${filterIso === iso ? "bg-cyan-500 text-black" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}>
-                  {iso}
-                </button>
+            <input
+              className={inputCls + " flex-1"}
+              placeholder="Buscar por código ou descrição…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select
+              className={inputCls + " sm:w-36"}
+              value={filterDepth}
+              onChange={(e) => setFilterDepth(e.target.value)}
+            >
+              <option value="ALL">Todos L/D</option>
+              {depthOptions.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
               ))}
-            </div>
-            <select className={inputCls + " sm:w-40"} value={filterLine} onChange={e => setFilterLine(e.target.value)}>
-              <option value="ALL">Todas as linhas</option>
-              {lines.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+            <select
+              className={inputCls + " sm:w-56"}
+              value={filterCoolant}
+              onChange={(e) => setFilterCoolant(e.target.value)}
+            >
+              <option value="ALL">Todas refrigerações</option>
+              {coolantOptions.map((c) => (
+                <option key={c} value={c}>
+                  {COOLANT_LABELS[c] ?? c}
+                </option>
+              ))}
+            </select>
+            <select
+              className={inputCls + " sm:w-46"}
+              value={filterMaterial}
+              onChange={(e) => setFilterMaterial(e.target.value)}
+            >
+              <option value="ALL">Todos materiais</option>
+              {materialOptions.map((d) => (
+                <option key={d} value={d}>
+                  {d == "00" ? "N/A" : d}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -425,40 +526,61 @@ export default function ToolsSection() {
               <thead>
                 <tr className="border-b border-slate-800 bg-[#070f1e]">
                   <SortTh field="code">Código</SortTh>
-                  <SortTh field="line">Linha</SortTh>
                   <SortTh field="diameter">Ø (mm)</SortTh>
+                  <SortTh field="material">Material</SortTh>
                   <SortTh field="depthRatio">L/D</SortTh>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-black tracking-widest text-slate-500 uppercase">ISO</th>
-                  <SortTh field="coolant">Refrig.</SortTh>
-                  <SortTh field="coating">Coating</SortTh>
-                  <SortTh field="flutes">Flutes</SortTh>
+                  <SortTh field="totalLength">Comp. (mm)</SortTh>
+                  <th className="px-3 py-2.5 text-left text-[10px] font-black tracking-widest text-slate-500 uppercase">
+                    Refrig.
+                  </th>
+                  <SortTh field="listPrice">Preço</SortTh>
                 </tr>
               </thead>
               <tbody>
                 {sorted.slice(0, 500).map((t, i) => (
-                  <tr key={t.code + i} className="border-b border-slate-800/40 hover:bg-slate-800/30 transition">
-                    <td className="px-3 py-2.5 font-bold text-cyan-300 font-mono text-xs">{t.code}</td>
-                    <td className="px-3 py-2.5 text-slate-300">{t.line}</td>
-                    <td className="px-3 py-2.5 text-slate-200 font-mono">{t.diameter || "—"}</td>
-                    <td className="px-3 py-2.5 text-slate-300">{t.depthRatio}</td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex gap-1 flex-wrap">
-                        {t.isoClasses.map(iso => <IsoBadge key={iso} iso={iso} />)}
-                      </div>
+                  <tr
+                    key={t.code + i}
+                    className="border-b border-slate-800/40 hover:bg-slate-800/30 transition"
+                  >
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <p className="font-bold text-cyan-300 font-mono text-xs">
+                        {t.code}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                        {t.description}
+                      </p>
                     </td>
-                    <td className="px-3 py-2.5 text-slate-400 text-xs">{t.coolant}</td>
-                    <td className="px-3 py-2.5 text-slate-400 text-xs">{t.coating}</td>
-                    <td className="px-3 py-2.5 text-slate-400 text-xs">{t.flutes || "—"}</td>
+                    <td className="px-3 py-2.5 text-slate-200 font-mono">
+                      {t.diameter.toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-300 text-center">
+                      {t.material == "00" ? "N/A" : t.material}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-300">
+                      {t.depthRatio}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-400 font-mono">
+                      {t.totalLength ?? "—"}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <CoolantBadge coolant={t.coolant} />
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-300 font-mono text-xs">
+                      {formatter.format(t.listPrice)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {sorted.length === 0 && (
-              <p className="py-10 text-center text-slate-600 text-sm">Nenhuma ferramenta encontrada com esses filtros.</p>
+              <p className="py-10 text-center text-slate-600 text-sm">
+                Nenhuma ferramenta encontrada com esses filtros.
+              </p>
             )}
             {sorted.length > 500 && (
               <p className="py-3 text-center text-xs text-slate-600">
-                Mostrando 500 de {sorted.length.toLocaleString("pt-BR")} ferramentas. Use os filtros para refinar.
+                Mostrando 500 de {sorted.length.toLocaleString("pt-BR")}{" "}
+                resultados. Use os filtros para refinar.
               </p>
             )}
           </div>

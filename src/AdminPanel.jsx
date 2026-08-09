@@ -563,6 +563,7 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
       life: 1000,
       iso: "P",
       materialClass: "",
+      materialCode: "",
     });
     setOrigName(null);
     setIsNew(true);
@@ -592,6 +593,7 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
       life: Number(fields.life),
       iso: fields.iso,
       materialClass: fields.materialClass,
+      materialCode: (fields.materialCode ?? "").trim().toUpperCase(),
     };
     onChange(next);
     setEditing(null);
@@ -761,15 +763,35 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
               currentMaterialName={origName}
             />
 
-            <FormField label="Classe do material">
-              <input
-                className={inputCls}
-                value={editing.materialClass}
-                onChange={(e) =>
-                  setEditing((p) => ({ ...p, materialClass: e.target.value }))
-                }
-              />
-            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Classe do material">
+                <input
+                  className={inputCls}
+                  value={editing.materialClass}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, materialClass: e.target.value }))
+                  }
+                />
+              </FormField>
+              <FormField
+                label="Código de material (CSV)"
+                hint="2 letras usadas no código da ferramenta"
+              >
+                <select
+                  className={inputCls}
+                  value={editing.materialCode ?? ""}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, materialCode: e.target.value }))
+                  }
+                >
+                  <option value="">— Não mapeado —</option>
+                  <option value="ST">ST — Steel</option>
+                  <option value="AL">AL — Aluminium</option>
+                  <option value="CT">CT — Cast Iron</option>
+                  <option value="TN">TN — Titanium</option>
+                </select>
+              </FormField>
+            </div>
             <div className="flex gap-2 pt-2">
               <button
                 onClick={save}
