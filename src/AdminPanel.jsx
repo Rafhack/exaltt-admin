@@ -774,7 +774,7 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                 />
               </FormField>
               <FormField
-                label="Código de material (CSV)"
+                label="Código de material (Catálogo)"
                 hint="2 letras usadas no código da ferramenta"
               >
                 <select
@@ -784,11 +784,15 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
                     setEditing((p) => ({ ...p, materialCode: e.target.value }))
                   }
                 >
-                  <option value="">— Não mapeado —</option>
-                  <option value="ST">ST — Steel</option>
-                  <option value="AL">AL — Aluminium</option>
-                  <option value="CT">CT — Cast Iron</option>
-                  <option value="TN">TN — Titanium</option>
+                  <option value="00">— Não mapeado —</option>
+                  <option value="ST">ST — Aço</option>
+                  <option value="AL">AL — Alumínio</option>
+                  <option value="CT">CT — Ferro fundido</option>
+                  <option value="TN">TN — Titânio</option>
+                  <option value="DT">DT</option>
+                  <option value="GN">GN</option>
+                  <option value="GR">GR</option>
+                  <option value="PL">PL</option>
                 </select>
               </FormField>
             </div>
