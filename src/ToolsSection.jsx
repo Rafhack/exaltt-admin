@@ -1,41 +1,34 @@
 /**
  * ToolsSection — Admin panel section for importing EXALTT tools from an XLSX file.
  *
- * The XLSX is a TopTools ERP export with the format shown in:
- *   Relatorio_lista_de_produtos_EXALTT_sample.xlsx
+ * The XLSX is a TopTools ERP export (Relatorio_lista_de_produtos_EXALTT.xlsx).
+ * EXALTT tools are identified by codes that start with "EX".
+ * The ERP export contains duplicate rows (one per Filial/branch) — deduped by code.
  *
  * Relevant columns (headers have trailing spaces — trimmed on read):
- *   [0] Codigo       — tool code, e.g. EX0300-03002-01
- *   [1] Descricao    — description, e.g. BRP MD 2C RI D3X16XD6X52L
- *   [4] Grupo        — product group
- *   [5] Preco Lista  — list price
- *   [12] Desc Grupo  — group description
- *   [16] Nome Empresa — company (always "TOP TOOLS" for EXALTT tools)
- *
- * EXALTT tools are identified by codes that start with "EX".
- * The ERP export may contain duplicate rows (one per Filial/branch) — deduped by code.
+ *   [0] Codigo      — tool code,    e.g. EX0300-03002-01
+ *   [1] Descricao   — description,  e.g. BRP MD 2C RI D3X16XD6X52L
+ *   [5] Preco Lista — list price
  *
  * Code format: EX0300-03002-01
- *   Segment 0: EX<model>    — "EX" prefix + 4-digit model number
- *   Segment 1: <diam><flutes>  — 4-digit diameter (÷100 = mm) + 1-digit flute count
- *   Segment 2: <revision>   — ignored for now
+ *   Segment 0: EX<model>          — "EX" prefix + 2-char model (e.g. "03")
+ *              followed by 2-char material code (e.g. "00" = N/A, "ST" = Steel)
+ *   Segment 1: <diam><depthRatio> — 3-digit diameter (÷10 = mm) + 2-digit L/D ratio
+ *   Segment 2: <revision>         — ignored
  *
  * Description format: BRP MD 2C RI D3X16XD6X52L
- *   D<n>       — nominal diameter in mm
- *   XD<n>      — depth-to-diameter ratio (XD6 = 6xD)
- *   <n>C       — number of cutting edges
  *   RI / RE    — internal / external coolant
  *   X<n>L      — total length in mm
  */
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useAuth } from "./AuthContext.jsx";
 import * as XLSX from "xlsx";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 // ─── CODE PARSER ─────────────────────────────────────────────────────────────
-// Format: EX0300-03002-01
+// Format: EX<model><material>-<diam><depthRatio>-<revision>
 const CODE_RE = /^(EX[A-Z0-9]{2})([A-Z0-9]{2})-(\d{3})(\d{2})-([A-Z0-9]+)$/i;
 
 function parseToolCode(rawCode) {
@@ -51,7 +44,7 @@ function parseToolCode(rawCode) {
 }
 
 // ─── DESCRIPTION PARSER ──────────────────────────────────────────────────────
-// Format: BRP MD 2C RI D3X16XD6X52L
+// Extracts coolant and total length from the description string.
 function parseDescription(desc) {
   const s = (desc ?? "").toUpperCase();
 
@@ -178,11 +171,52 @@ function CoolantBadge({ coolant }) {
   );
 }
 
+const MATERIAL_COLORS = {
+  ST: "#3b82f6", // Steel          — blue
+  AL: "#10b981", // Aluminium      — emerald
+  CT: "#f59e0b", // Cast Iron      — amber
+  TN: "#8b5cf6", // Titanium       — violet
+  DT: "#ef4444", // unknown        — red
+  GN: "#22d3ee", // unknown        — cyan
+  GR: "#64748b", // unknown        — slate
+  PL: "#f97316", // unknown        — orange
+  "00": "#334155", // N/A           — dark slate
+};
+const MATERIAL_LABELS = {
+  ST: "ST",
+  AL: "AL",
+  CT: "CT",
+  TN: "TN",
+  DT: "DT",
+  GN: "GN",
+  GR: "GR",
+  PL: "PL",
+  "00": "N/A",
+};
+
+function MaterialBadge({ material }) {
+  const key = material === "00" ? "00" : material;
+  const color = MATERIAL_COLORS[key] ?? "#475569";
+  const label = MATERIAL_LABELS[key] ?? material;
+  return (
+    <span
+      style={{
+        background: color + "22",
+        color,
+        border: `1px solid ${color}55`,
+      }}
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black tracking-wider"
+    >
+      {label}
+    </span>
+  );
+}
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function ToolsSection() {
   const { token } = useAuth();
 
-  const [phase, setPhase] = useState("idle"); // idle|parsing|done|saving|saved
+  const [phase, setPhase] = useState("idle"); // idle|loading|parsing|done|saving|saved
   const [progress, setProgress] = useState(0);
   const [parseError, setParseError] = useState("");
   const [fileName, setFileName] = useState("");
@@ -193,13 +227,41 @@ export default function ToolsSection() {
   const [filterDepth, setFilterDepth] = useState("ALL");
   const [filterCoolant, setFilterCoolant] = useState("ALL");
   const [filterMaterial, setFilterMaterial] = useState("ALL");
-  const [sortField, setSortField] = useState("diameter");
+  const [sortField, setSortField] = useState("code");
   const [sortDir, setSortDir] = useState("asc");
 
   const [saveError, setSaveError] = useState("");
   const [savedCount, setSavedCount] = useState(0);
 
+  // Load the saved catalog on mount
+  useEffect(() => {
+    if (!token) return;
+    setPhase("loading");
+    fetch(`${API_BASE_URL}/api/tools`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setTools(data);
+          setFileName("Catálogo salvo");
+          setRawCount(data.length);
+          setPhase("done");
+        } else {
+          setPhase("idle");
+        }
+      })
+      .catch(() => {
+        // If fetch fails just show the upload screen, don't block the user
+        setPhase("idle");
+      });
+  }, [token]);
+
   const fileInputRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleFile = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -232,6 +294,21 @@ export default function ToolsSection() {
 
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
+
+  const handleDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+      if (!/\.xlsx$/i.test(file.name)) {
+        setParseError("Apenas arquivos .xlsx são suportados.");
+        return;
+      }
+      handleFile({ target: { files: [file] } });
+    },
+    [handleFile],
+  );
 
   const handleSave = async () => {
     if (!tools.length) return;
@@ -330,7 +407,7 @@ export default function ToolsSection() {
 
   const inputCls =
     "w-full rounded-xl border border-slate-700/60 bg-[#070f1e] px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/10 placeholder:text-slate-600";
-  const isActive = phase !== "idle";
+  const isActive = phase !== "idle" && phase !== "loading";
   const formatter = new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
@@ -362,6 +439,14 @@ export default function ToolsSection() {
         )}
       </div>
 
+      {/* ── LOADING (initial catalog fetch) ────────────────────────────────── */}
+      {phase === "loading" && (
+        <div className="flex items-center justify-center py-16 gap-3">
+          <div className="h-5 w-5 rounded-full border-2 border-cyan-500/30 border-t-cyan-500 animate-spin" />
+          <p className="text-sm text-slate-500">Carregando catálogo salvo…</p>
+        </div>
+      )}
+
       {/* ── UPLOAD ZONE ───────────────────────────────────────────────────── */}
       {!isActive && (
         <div>
@@ -374,11 +459,28 @@ export default function ToolsSection() {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="w-full rounded-2xl border-2 border-dashed border-slate-700/60 bg-[#070f1e] px-6 py-12 text-center transition hover:border-cyan-500/40 hover:bg-cyan-500/5 group"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+            }}
+            onDrop={handleDrop}
+            className={`w-full rounded-2xl border-2 border-dashed px-6 py-12 text-center transition group ${
+              isDragging
+                ? "border-cyan-400 bg-cyan-500/10"
+                : "border-slate-700/60 bg-[#070f1e] hover:border-cyan-500/40 hover:bg-cyan-500/5"
+            }`}
           >
-            <div className="text-4xl mb-3">📂</div>
-            <p className="font-black text-white group-hover:text-cyan-300 transition">
-              Clique para selecionar o arquivo XLSX
+            <div className="text-4xl mb-3">{isDragging ? "📥" : "📂"}</div>
+            <p
+              className={`font-black transition ${isDragging ? "text-cyan-300" : "text-white group-hover:text-cyan-300"}`}
+            >
+              {isDragging
+                ? "Solte o arquivo aqui"
+                : "Clique ou arraste o arquivo XLSX"}
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Relatório ERP —{" "}
@@ -514,7 +616,7 @@ export default function ToolsSection() {
               <option value="ALL">Todos materiais</option>
               {materialOptions.map((d) => (
                 <option key={d} value={d}>
-                  {d == "00" ? "N/A" : d}
+                  {MATERIAL_LABELS[d] ?? d}
                 </option>
               ))}
             </select>
@@ -553,8 +655,8 @@ export default function ToolsSection() {
                     <td className="px-3 py-2.5 text-slate-200 font-mono">
                       {t.diameter.toFixed(2)}
                     </td>
-                    <td className="px-3 py-2.5 text-slate-300 text-center">
-                      {t.material == "00" ? "N/A" : t.material}
+                    <td className="px-3 py-2.5">
+                      <MaterialBadge material={t.material} />
                     </td>
                     <td className="px-3 py-2.5 text-slate-300">
                       {t.depthRatio}
