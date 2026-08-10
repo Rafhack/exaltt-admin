@@ -563,7 +563,6 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
       life: 1000,
       iso: "P",
       materialClass: "",
-      materialCode: "",
     });
     setOrigName(null);
     setIsNew(true);
@@ -593,7 +592,6 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
       life: Number(fields.life),
       iso: fields.iso,
       materialClass: fields.materialClass,
-      materialCode: (fields.materialCode ?? "").trim().toUpperCase(),
     };
     onChange(next);
     setEditing(null);
@@ -762,40 +760,15 @@ function MaterialsSection({ materials, isoClasses, onChange }) {
               materials={materials}
               currentMaterialName={origName}
             />
-
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Classe do material">
-                <input
-                  className={inputCls}
-                  value={editing.materialClass}
-                  onChange={(e) =>
-                    setEditing((p) => ({ ...p, materialClass: e.target.value }))
-                  }
-                />
-              </FormField>
-              <FormField
-                label="Código de material (Catálogo)"
-                hint="2 letras usadas no código da ferramenta"
-              >
-                <select
-                  className={inputCls}
-                  value={editing.materialCode ?? ""}
-                  onChange={(e) =>
-                    setEditing((p) => ({ ...p, materialCode: e.target.value }))
-                  }
-                >
-                  <option value="00">— Não mapeado —</option>
-                  <option value="ST">ST — Aço</option>
-                  <option value="AL">AL — Alumínio</option>
-                  <option value="CT">CT — Ferro fundido</option>
-                  <option value="TN">TN — Titânio</option>
-                  <option value="DT">DT</option>
-                  <option value="GN">GN</option>
-                  <option value="GR">GR</option>
-                  <option value="PL">PL</option>
-                </select>
-              </FormField>
-            </div>
+            <FormField label="Classe do material">
+              <input
+                className={inputCls}
+                value={editing.materialClass}
+                onChange={(e) =>
+                  setEditing((p) => ({ ...p, materialClass: e.target.value }))
+                }
+              />
+            </FormField>
             <div className="flex gap-2 pt-2">
               <button
                 onClick={save}
@@ -914,7 +887,13 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
   const [isNew, setIsNew] = useState(false);
 
   const openNew = () => {
-    setEditing({ code: "", name: "", application: "", iso: [] });
+    setEditing({
+      code: "",
+      name: "",
+      application: "",
+      iso: [],
+      materialCode: "",
+    });
     setIsNew(true);
   };
   const save = () => {
@@ -926,6 +905,7 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
         name: editing.name,
         application: editing.application,
         iso: editing.iso,
+        materialCode: (editing.materialCode ?? "").trim().toUpperCase(),
       },
     };
     onChange(next);
@@ -983,10 +963,16 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
             <p className="text-xs text-slate-400 leading-relaxed">
               {g.application}
             </p>
-            <div className="flex gap-1 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               {g.iso.map((i) => (
                 <IsoBadge key={i} iso={i} isoColors={isoColors} />
               ))}
+              /
+              {g.materialCode && (
+                <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[10px] font-black text-amber-300">
+                  {g.materialCode}
+                </span>
+              )}
             </div>
           </div>
         ))}
@@ -1061,6 +1047,28 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
                   </button>
                 ))}
               </div>
+            </FormField>
+            <FormField
+              label="Código de material da ferramenta"
+              hint="2 letras presentes no código EXALTT (ex: ST, AL, CT, TN)"
+            >
+              <select
+                className={inputCls}
+                value={editing.materialCode ?? ""}
+                onChange={(e) =>
+                  setEditing((p) => ({ ...p, materialCode: e.target.value }))
+                }
+              >
+                <option value="">— Não mapeado —</option>
+                <option value="ST">ST</option>
+                <option value="AL">AL</option>
+                <option value="CT">CT</option>
+                <option value="TN">TN</option>
+                <option value="DT">DT</option>
+                <option value="GN">GN</option>
+                <option value="GR">GR</option>
+                <option value="PL">PL</option>
+              </select>
             </FormField>
             <div className="flex gap-2 pt-2">
               <button
