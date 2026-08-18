@@ -157,80 +157,375 @@ const inputCls =
 // ─── SECTIONS ─────────────────────────────────────────────────────────────────
 
 function BrandSection({ brand, onChange }) {
-  const [local, setLocal] = useState({ ...brand });
-  useEffect(() => setLocal({ ...brand }), [brand]);
+  const normalizeBrand = (brand) => ({
+    ...brand,
+    logo1: brand.logo1 ?? {
+      logoUrl: brand.logoUrl ?? "",
+      logoStoragePath: brand.logoStoragePath ?? "",
+    },
+    logo2: brand.logo2 ?? {
+      logoUrl: "",
+      logoStoragePath: "",
+    },
+  });
+
+  const [local, setLocal] = useState(() => normalizeBrand(brand));
+
+  useEffect(() => {
+    setLocal(normalizeBrand(brand));
+  }, [brand]);
+
   const set = (k, v) => setLocal((p) => ({ ...p, [k]: v }));
 
   // ── Logo upload state ──────────────────────────────────────────────────────
-  const [uploadProgress, setUploadProgress] = useState(null); // 0-100 or null
-  const [uploadError, setUploadError] = useState("");
-  const [removing, setRemoving] = useState(false);
-  const fileInputRef = useRef(null);
+  const [uploadProgress, setUploadProgress] = useState({
+    logo1: null,
+    logo2: null,
+  });
 
-  const handleLogoChange = (e) => {
+  const [uploadError, setUploadError] = useState({
+    logo1: "",
+    logo2: "",
+  });
+
+  const [removing, setRemoving] = useState({
+    logo1: false,
+    logo2: false,
+  });
+
+  const fileInputRefs = {
+    logo1: useRef(null),
+    logo2: useRef(null),
+  };
+
+  // ── Image trimming ─────────────────────────────────────────────────────────
+  const trimTransparentPixels = (file) =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+
+        const ctx = canvas.getContext("2d", {
+          willReadFrequently: true,
+        });
+
+        ctx.drawImage(img, 0, 0);
+
+        const { width, height } = canvas;
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const pixels = imageData.data;
+
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const alpha = pixels[(y * width + x) * 4 + 3];
+
+            if (alpha > 0) {
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x);
+              maxY = Math.max(maxY, y);
+            }
+          }
+        }
+
+        // Completely transparent image
+        if (maxX === -1) {
+          resolve(file);
+          return;
+        }
+
+        const trimmedCanvas = document.createElement("canvas");
+        trimmedCanvas.width = maxX - minX + 1;
+        trimmedCanvas.height = maxY - minY + 1;
+
+        trimmedCanvas
+          .getContext("2d")
+          .drawImage(
+            canvas,
+            minX,
+            minY,
+            trimmedCanvas.width,
+            trimmedCanvas.height,
+            0,
+            0,
+            trimmedCanvas.width,
+            trimmedCanvas.height,
+          );
+
+        trimmedCanvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error("Failed to trim image"));
+              return;
+            }
+
+            resolve(
+              new File([blob], file.name, {
+                type: "image/png",
+                lastModified: file.lastModified,
+              }),
+            );
+          },
+          "image/png",
+        );
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Failed to load image"));
+      };
+
+      img.src = objectUrl;
+    });
+
+  // ── Logo upload ────────────────────────────────────────────────────────────
+  const handleLogoChange = async (logoKey, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowed = ["image/png", "image/jpeg", "image/svg+xml", "image/webp"];
+    const allowed = [
+      "image/png",
+      "image/jpeg",
+      "image/svg+xml",
+      "image/webp",
+    ];
+
     if (!allowed.includes(file.type)) {
-      setUploadError("Formato não suportado. Use PNG, JPG, SVG ou WebP.");
+      setUploadError((p) => ({
+        ...p,
+        [logoKey]: "Formato não suportado. Use PNG, JPG, SVG ou WebP.",
+      }));
       return;
     }
+
     if (file.size > 2 * 1024 * 1024) {
-      setUploadError("Arquivo muito grande. Máximo 2 MB.");
+      setUploadError((p) => ({
+        ...p,
+        [logoKey]: "Arquivo muito grande. Máximo 2 MB.",
+      }));
       return;
     }
 
-    setUploadError("");
-    setUploadProgress(0);
+    setUploadError((p) => ({
+      ...p,
+      [logoKey]: "",
+    }));
 
-    const storageRef = ref(storage, `brand/logo_${Date.now()}_${file.name}`);
-    const task = uploadBytesResumable(storageRef, file);
+    setUploadProgress((p) => ({
+      ...p,
+      [logoKey]: 0,
+    }));
 
-    task.on(
-      "state_changed",
-      (snap) =>
-        setUploadProgress(
-          Math.round((snap.bytesTransferred / snap.totalBytes) * 100),
-        ),
-      (err) => {
-        setUploadError(err.message);
-        setUploadProgress(null);
-      },
-      async () => {
-        const url = await getDownloadURL(task.snapshot.ref);
-        // Delete old logo from storage if it was also uploaded by us
-        if (local.logoUrl && local.logoStoragePath) {
-          try {
-            await deleteObject(ref(storage, local.logoStoragePath));
-          } catch {}
-        }
-        const updated = {
-          ...local,
-          logoUrl: url,
-          logoStoragePath: task.snapshot.ref.fullPath,
-        };
-        setLocal(updated);
-        onChange(updated);
-        setUploadProgress(null);
-      },
-    );
+    try {
+      // SVG is kept as SVG because rendering it through canvas would
+      // rasterize it. Raster formats are trimmed and converted to PNG.
+      const processedFile =
+        file.type === "image/svg+xml"
+          ? file
+          : await trimTransparentPixels(file);
+
+      const storageRef = ref(
+        storage,
+        `brand/${logoKey}_${Date.now()}_${processedFile.name}`,
+      );
+
+      const task = uploadBytesResumable(storageRef, processedFile);
+
+      task.on(
+        "state_changed",
+        (snap) => {
+          setUploadProgress((p) => ({
+            ...p,
+            [logoKey]: Math.round(
+              (snap.bytesTransferred / snap.totalBytes) * 100,
+            ),
+          }));
+        },
+        (err) => {
+          setUploadError((p) => ({
+            ...p,
+            [logoKey]: err.message,
+          }));
+
+          setUploadProgress((p) => ({
+            ...p,
+            [logoKey]: null,
+          }));
+        },
+        async () => {
+          const url = await getDownloadURL(task.snapshot.ref);
+
+          // Delete the old logo from storage if it was also uploaded by us.
+          const oldLogo = local[logoKey];
+
+          if (oldLogo?.logoStoragePath) {
+            try {
+              await deleteObject(
+                ref(storage, oldLogo.logoStoragePath),
+              );
+            } catch {}
+          }
+
+          const updated = {
+            ...local,
+            [logoKey]: {
+              logoUrl: url,
+              logoStoragePath: task.snapshot.ref.fullPath,
+            },
+          };
+
+          setLocal(updated);
+          onChange(updated);
+
+          setUploadProgress((p) => ({
+            ...p,
+            [logoKey]: null,
+          }));
+        },
+      );
+    } catch (err) {
+      setUploadError((p) => ({
+        ...p,
+        [logoKey]: err.message || "Erro ao processar imagem.",
+      }));
+
+      setUploadProgress((p) => ({
+        ...p,
+        [logoKey]: null,
+      }));
+    }
   };
 
-  const handleRemoveLogo = async () => {
-    setRemoving(true);
-    if (local.logoStoragePath) {
+  // ── Logo removal ────────────────────────────────────────────────────────────
+  const handleRemoveLogo = async (logoKey) => {
+    setRemoving((p) => ({
+      ...p,
+      [logoKey]: true,
+    }));
+
+    const logo = local[logoKey];
+
+    if (logo?.logoStoragePath) {
       try {
-        await deleteObject(ref(storage, local.logoStoragePath));
+        await deleteObject(ref(storage, logo.logoStoragePath));
       } catch {}
     }
-    const updated = { ...local, logoUrl: "", logoStoragePath: "" };
+
+    const updated = {
+      ...local,
+      [logoKey]: {
+        logoUrl: "",
+        logoStoragePath: "",
+      },
+    };
+
     setLocal(updated);
     onChange(updated);
-    setRemoving(false);
+
+    setRemoving((p) => ({
+      ...p,
+      [logoKey]: false,
+    }));
   };
 
   const handleSave = () => onChange(local);
+
+  const renderLogo = (logoKey, label) => {
+    const logo = local[logoKey];
+    const progress = uploadProgress[logoKey];
+    const error = uploadError[logoKey];
+    const isRemoving = removing[logoKey];
+
+    return (
+      <div className="flex-1 min-w-[260px] rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
+        <p className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
+          {label}
+        </p>
+
+        <div className="flex flex-wrap items-center gap-4">
+          {logo?.logoUrl ? (
+            <div className="relative flex-shrink-0">
+              <img
+                src={logo.logoUrl}
+                alt={label}
+                className="h-16 max-w-[160px] rounded-xl border border-slate-700/60 bg-white object-contain p-2"
+              />
+            </div>
+          ) : (
+            <div className="flex h-16 w-32 flex-shrink-0 items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/40 text-xs text-slate-600">
+              Sem logo
+            </div>
+          )}
+
+          <div className="flex flex-shrink-0 flex-col gap-2">
+            <input
+              ref={fileInputRefs[logoKey]}
+              type="file"
+              accept="image/png,image/jpeg,image/svg+xml,image/webp"
+              className="hidden"
+              onChange={(e) => handleLogoChange(logoKey, e)}
+            />
+
+            <button
+              onClick={() => fileInputRefs[logoKey].current?.click()}
+              disabled={progress !== null || isRemoving}
+              className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-black text-cyan-400 hover:bg-cyan-500/20 transition disabled:opacity-50"
+            >
+              {progress !== null
+                ? `Enviando… ${progress}%`
+                : logo?.logoUrl
+                  ? "Trocar logo"
+                  : "Enviar logo"}
+            </button>
+
+            {logo?.logoUrl && (
+              <button
+                onClick={() => handleRemoveLogo(logoKey)}
+                disabled={isRemoving || progress !== null}
+                className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
+              >
+                {isRemoving ? "Removendo…" : "Remover logo"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="text-xs leading-relaxed text-slate-600">
+          PNG, JPG, SVG ou WebP
+          <br />
+          Máximo 2 MB
+          <br />
+          Fundo transparente recomendado
+        </div>
+
+        {progress !== null && (
+          <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-cyan-500 transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        )}
+
+        {error && (
+          <p className="text-xs text-red-400">
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -240,71 +535,16 @@ function BrandSection({ brand, onChange }) {
         subtitle="Nome, linha, produto e configurações de endpoint"
       />
 
-      {/* Logo */}
-      <div className="rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
+      {/* Logos */}
+      <div className="rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-4">
         <p className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
-          Logotipo
+          Logotipos
         </p>
-        <div className="flex flex-wrap items-center gap-4">
-          {local.logoUrl ? (
-            <div className="relative flex-shrink-0">
-              <img
-                src={local.logoUrl}
-                alt="Logo"
-                className="h-16 max-w-[160px] rounded-xl border border-slate-700/60 bg-white object-contain p-2"
-              />
-            </div>
-          ) : (
-            <div className="flex h-16 w-32 flex-shrink-0 items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-900/40 text-xs text-slate-600">
-              Sem logo
-            </div>
-          )}
-          <div className="flex flex-shrink-0 flex-col gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/svg+xml,image/webp"
-              className="hidden"
-              onChange={handleLogoChange}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploadProgress !== null}
-              className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-black text-cyan-400 hover:bg-cyan-500/20 transition disabled:opacity-50"
-            >
-              {uploadProgress !== null
-                ? `Enviando… ${uploadProgress}%`
-                : local.logoUrl
-                  ? "Trocar logo"
-                  : "Enviar logo"}
-            </button>
-            {local.logoUrl && (
-              <button
-                onClick={handleRemoveLogo}
-                disabled={removing}
-                className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
-              >
-                {removing ? "Removendo…" : "Remover logo"}
-              </button>
-            )}
-          </div>
-          <div className="min-w-[140px] flex-1 basis-full text-xs leading-relaxed text-slate-600 sm:basis-0">
-            PNG, JPG, SVG ou WebP
-            <br />
-            Máximo 2 MB
-            <br />
-            Recomendado: fundo transparente
-          </div>
+
+        <div className="flex flex-wrap gap-4">
+          {renderLogo("logo1", "Logo 1")}
+          {renderLogo("logo2", "Logo 2")}
         </div>
-        {uploadProgress !== null && (
-          <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-cyan-500 transition-all"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-        )}
-        {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -315,6 +555,7 @@ function BrandSection({ brand, onChange }) {
             onChange={(e) => set("company", e.target.value)}
           />
         </FormField>
+
         <FormField label="Linha">
           <input
             className={inputCls}
@@ -322,6 +563,7 @@ function BrandSection({ brand, onChange }) {
             onChange={(e) => set("line", e.target.value)}
           />
         </FormField>
+
         <FormField label="Produto">
           <input
             className={inputCls}
@@ -329,6 +571,7 @@ function BrandSection({ brand, onChange }) {
             onChange={(e) => set("product", e.target.value)}
           />
         </FormField>
+
         <FormField label="Modo">
           <input
             className={inputCls}
@@ -337,41 +580,7 @@ function BrandSection({ brand, onChange }) {
           />
         </FormField>
       </div>
-      {/* <div className="mt-2 rounded-xl border border-slate-700/40 bg-[#070f1e] p-4 space-y-3">
-        <p className="text-[11px] font-black tracking-widest text-slate-400 uppercase">
-          Configurações de E-mail e API
-        </p>
-        <FormField
-          label="E-mail autorizado do notebook"
-          hint="E-mail vinculado ao envio automático do PDF"
-        >
-          <input
-            className={inputCls}
-            value={local.notebookEmail}
-            onChange={(e) => set("notebookEmail", e.target.value)}
-          />
-        </FormField>
-        <FormField
-          label="Endpoint OnboardIA"
-          hint="Endpoint primário de envio do agente"
-        >
-          <input
-            className={inputCls}
-            value={local.onboardiaEndpoint}
-            onChange={(e) => set("onboardiaEndpoint", e.target.value)}
-          />
-        </FormField>
-        <FormField
-          label="Endpoint de Fallback"
-          hint="Usado quando o endpoint primário falha"
-        >
-          <input
-            className={inputCls}
-            value={local.fallbackEndpoint}
-            onChange={(e) => set("fallbackEndpoint", e.target.value)}
-          />
-        </FormField>
-      </div>*/}
+
       <SaveButton onClick={handleSave} />
     </div>
   );
