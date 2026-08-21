@@ -263,22 +263,19 @@ function BrandSection({ brand, onChange }) {
             trimmedCanvas.height,
           );
 
-        trimmedCanvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error("Failed to trim image"));
-              return;
-            }
+        trimmedCanvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("Failed to trim image"));
+            return;
+          }
 
-            resolve(
-              new File([blob], file.name, {
-                type: "image/png",
-                lastModified: file.lastModified,
-              }),
-            );
-          },
-          "image/png",
-        );
+          resolve(
+            new File([blob], file.name, {
+              type: "image/png",
+              lastModified: file.lastModified,
+            }),
+          );
+        }, "image/png");
       };
 
       img.onerror = () => {
@@ -294,12 +291,7 @@ function BrandSection({ brand, onChange }) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowed = [
-      "image/png",
-      "image/jpeg",
-      "image/svg+xml",
-      "image/webp",
-    ];
+    const allowed = ["image/png", "image/jpeg", "image/svg+xml", "image/webp"];
 
     if (!allowed.includes(file.type)) {
       setUploadError((p) => ({
@@ -371,9 +363,7 @@ function BrandSection({ brand, onChange }) {
 
           if (oldLogo?.logoStoragePath) {
             try {
-              await deleteObject(
-                ref(storage, oldLogo.logoStoragePath),
-              );
+              await deleteObject(ref(storage, oldLogo.logoStoragePath));
             } catch {}
           }
 
@@ -455,11 +445,12 @@ function BrandSection({ brand, onChange }) {
 
         <div className="flex flex-wrap items-center gap-4">
           {logo?.logoUrl ? (
-            <div className="relative flex-shrink-0">
+            <div className="relative flex-shrink-0 bg-[#E3CE3D] rounded-xl">
               <img
                 src={logo.logoUrl}
                 alt={label}
-                className="h-16 max-w-[160px] rounded-xl border border-slate-700/60 bg-white object-contain p-2"
+                className="h-16 max-w-[160px] rounded-xl border border-slate-700/60 object-contain p-2"
+                style={{ filter: "brightness(0)" }}
               />
             </div>
           ) : (
@@ -518,11 +509,7 @@ function BrandSection({ brand, onChange }) {
           </div>
         )}
 
-        {error && (
-          <p className="text-xs text-red-400">
-            {error}
-          </p>
-        )}
+        {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
     );
   };
