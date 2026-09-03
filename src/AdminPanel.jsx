@@ -1089,6 +1089,7 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
       application: "",
       iso: [],
       materialCode: "",
+      coating: "",
     });
     setIsNew(true);
   };
@@ -1102,6 +1103,7 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
         application: editing.application,
         iso: editing.iso,
         materialCode: (editing.materialCode ?? "").trim().toUpperCase(),
+        coating: (editing.coating ?? "").trim().toUpperCase(),
       },
     };
     onChange(next);
@@ -1167,6 +1169,11 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
               {g.materialCode && (
                 <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[10px] font-black text-amber-300">
                   {g.materialCode}
+                </span>
+              )}
+              {g.coating && (
+                <span className="rounded-full bg-purple-500/10 border border-purple-500/30 px-2 py-0.5 text-[10px] font-black text-purple-300">
+                  Rev: {g.coating}
                 </span>
               )}
             </div>
@@ -1244,28 +1251,46 @@ function GeometriesSection({ geometries, isoClasses, onChange }) {
                 ))}
               </div>
             </FormField>
-            <FormField
-              label="Código de material da ferramenta"
-              hint="2 letras presentes no código EXALTT (ex: ST, AL, CT, TN)"
-            >
-              <select
-                className={inputCls}
-                value={editing.materialCode ?? ""}
-                onChange={(e) =>
-                  setEditing((p) => ({ ...p, materialCode: e.target.value }))
-                }
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField
+                label="Código de material"
+                hint="2 letras no código (ex: ST, AL)"
               >
-                <option value="">— Não mapeado —</option>
-                <option value="ST">ST</option>
-                <option value="AL">AL</option>
-                <option value="CT">CT</option>
-                <option value="TN">TN</option>
-                <option value="DT">DT</option>
-                <option value="GN">GN</option>
-                <option value="GR">GR</option>
-                <option value="PL">PL</option>
-              </select>
-            </FormField>
+                <select
+                  className={inputCls}
+                  value={editing.materialCode ?? ""}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, materialCode: e.target.value }))
+                  }
+                >
+                  <option value="">— Não mapeado —</option>
+                  <option value="ST">ST</option>
+                  <option value="AL">AL</option>
+                  <option value="CT">CT</option>
+                  <option value="TN">TN</option>
+                  <option value="DT">DT</option>
+                  <option value="GN">GN</option>
+                  <option value="GR">GR</option>
+                  <option value="PL">PL</option>
+                </select>
+              </FormField>
+
+              <FormField
+                label="Revestimento / Revisão"
+                hint="Ex: 00, 01, A, etc."
+              >
+                <input
+                  className={inputCls}
+                  value={editing.coating ?? ""}
+                  maxLength={2}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, coating: e.target.value }))
+                  }
+                />
+              </FormField>
+            </div>
+
             <div className="flex gap-2 pt-2">
               <button
                 onClick={save}
